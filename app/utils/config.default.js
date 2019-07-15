@@ -25,7 +25,7 @@ module.exports = function () {
   return new Promise((resolve, reject) => {
     fp(3075, '127.0.0.1', function (err, freePort) {
       if (err) {
-        reject(err)
+        return reject(err)
       }
       let defaultSettings = {
         hotkey: 'Control+2',
