@@ -79,7 +79,8 @@ export const settingMap = buildConst([
   'bookmarks',
   'history',
   'terminalThemes',
-  'bookmarkGroups'
+  'bookmarkGroups',
+  'jumpHosts'
 ])
 
 export const transferTypeMap = buildConst([

@@ -69,6 +69,7 @@ const store = Subx.create({
   history: copy(ls.get(settingMap.history) || []),
   bookmarks,
   bookmarkGroups,
+  jumpHosts: copy(ls.get(settingMap.jumpHosts) || []),
   sshConfigItems: copy(getGlobal('sshConfigItems')),
   isMaximized: window.getGlobal('isMaximized')(),
   config: copy(_config) || {},

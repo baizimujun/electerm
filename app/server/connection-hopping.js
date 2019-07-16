@@ -26,8 +26,8 @@ function connect (hostConfig, nextHostConfig, prevStream) {
           conn1.forwardOut(
             '127.0.0.1',
             port,
-            nextHostConfig.host || nextHostConfig.Host,
-            nextHostConfig.port || nextHostConfig.Port,
+            nextHostConfig.host,
+            nextHostConfig.port,
             (err, stream) => {
               if (err) {
                 conn1.end()
