@@ -70,6 +70,7 @@ const store = Subx.create({
   bookmarks,
   bookmarkGroups,
   jumpHosts: copy(ls.get(settingMap.jumpHosts) || []),
+  jumpHostId: '',
   sshConfigItems: copy(getGlobal('sshConfigItems')),
   isMaximized: window.getGlobal('isMaximized')(),
   config: copy(_config) || {},
@@ -373,6 +374,27 @@ const store = Subx.create({
 
   delTheme ({ id }) {
     store.themes = store.themes.filter(t => {
+      return t.id !== id
+    })
+    let { theme } = store
+    if (theme === id) {
+      store.theme = terminalThemes.defaultTheme.id
+    }
+    terminalThemes.delTheme(id)
+  },
+
+  addJumpHost (jumpHost) {
+    store.jumpHosts.unshift(jumpHost)
+  },
+
+  editJumpHost (id, update) {
+    let items = store.jumpHosts
+    let item = _.find(items, t => t.id === id)
+    Object.assign(item, update)
+  },
+
+  delJumpHost ({ id }) {
+    store.jumpHosts = store.jumpHosts.filter(t => {
       return t.id !== id
     })
     let { theme } = store
