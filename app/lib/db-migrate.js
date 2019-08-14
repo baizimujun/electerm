@@ -14,6 +14,10 @@ const _ = require('lodash')
 
 async function loadArr(arr, name) {
   await dbAction(name, 'insert', arr)
+  await dbAction('data', 'insert', {
+    _id: `${name}:order`,
+    data: arr.map(d => d.id)
+  })
 }
 
 module.exports = async () => {
