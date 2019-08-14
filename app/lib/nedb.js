@@ -3,40 +3,29 @@ const { appPath } = require('../utils/app-props')
 const { resolve } = require('path')
 const Datastore = require('nedb')
 const db = {}
-db.bookmarks = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.bookmarks.nedb'),
-  autoload: true
-})
-db.history = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.history.nedb'),
-  autoload: true
-})
-db.jumpHosts = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.jumphosts.nedb'),
-  autoload: true
-})
-db.bookmarkGroups = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.bookmarkgroups.nedb'),
-  autoload: true
-})
-db.themes = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.themes.nedb'),
-  autoload: true
-})
-db.lastStates = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.laststates.nedb'),
-  autoload: true
-})
-db.userConfigs = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.userconfigs.nedb'),
-  autoload: true
-})
-db.data = new Datastore({
-  filename: resolve(appPath, 'electerm', 'electerm.data.nedb'),
-  autoload: true
+const reso = (name) => {
+  return resolve(appPath, 'electerm', `electerm.${name}.nedb`)
+}
+const tables = [
+  'bookmarks',
+  'history',
+  'jumpHosts',
+  'bookmarkGroups',
+  'themes',
+  'lastStates',
+  'userConfigs',
+  'data',
+  'sessions'
+]
+
+tables.forEach(table => {
+  db[table] = new Datastore({
+    filename: reso(table),
+    autoload: true
+  })
 })
 
-module.exports = (dbName, op, ...args) => {
+const dbAction = (dbName, op, ...args) => {
   return new Promise((resolve, reject) => {
     db[dbName][op](...args, (err, result) => {
       if (err) {
@@ -45,4 +34,9 @@ module.exports = (dbName, op, ...args) => {
       resolve(result)
     })
   })
+}
+
+module.exports ={
+  dbAction,
+  tables
 }
