@@ -1,16 +1,15 @@
 import { TreeSelect } from 'antd'
-import { Component } from '../common/react-subx'
+import { PureComponent } from 'react'
 import copy from 'json-deep-copy'
-import createTitle from '../../common/create-title'
+import { createTitleWithTag } from '../../common/create-title'
 
-const { prefix } = window
-const e = prefix('setting')
+const e = window.translate
 const { SHOW_CHILD } = TreeSelect
 
-export default class StartSessionSelect extends Component {
+export default class StartSessionSelect extends PureComponent {
   buildData = () => {
-    const cats = copy(this.props.store.bookmarkGroups)
-    const tree = copy(this.props.store.bookmarks)
+    const cats = this.props.bookmarkGroups
+    const tree = this.props.bookmarks
       .reduce((p, k) => {
         return {
           ...p,
@@ -34,9 +33,10 @@ export default class StartSessionSelect extends Component {
         value: x.id,
         title: x.title
       }
-      if (x.bookmarkIds && x.bookmarkIds.length) {
-        y.children = x.bookmarkIds.map(buildLeaf).filter(d => d)
-      }
+      y.children = [
+        ...(x.bookmarkGroupIds || []).map(buildSubCats),
+        ...(x.bookmarkIds || []).map(buildLeaf)
+      ].filter(d => d)
       if (y.children && !y.children.length) {
         delete y.children
       }
@@ -50,7 +50,7 @@ export default class StartSessionSelect extends Component {
       return {
         value: x.id,
         key: x.id,
-        title: createTitle(x)
+        title: createTitleWithTag(x)
       }
     }
     const level1 = cats.filter(d => d.level !== 2)

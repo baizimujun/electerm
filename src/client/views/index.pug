@@ -1,6 +1,5 @@
 
 doctype html
-- var isDev = env !== 'production'
 html
   head
     meta(charset='UTF-8')
@@ -8,6 +7,9 @@ html
     meta(name='viewport', content='width=device-width, initial-scale=1, shrink-to-fit=no')
     title #{siteName}
     style.
+      body {
+        background: #000;
+      }
       #content-loading {
         position: fixed;
         left: 0;
@@ -20,22 +22,43 @@ html
         justify-content: center;
         align-items: center;
       }
-    style(id='less-css').
-    link(rel='stylesheet', href='css/electerm.styles.css?' + version)
-    link(rel='stylesheet', href='css/basic.styles.css?' + version)
-    style(id='theme-css').
+      .electerm-logo-bg {
+        background: transparent 50% 50% no-repeat url("./images/electerm-watermark.png");
+      }
+    - if (!isDev)
+      link(rel='stylesheet', href='css/' + version + '-basic.css')
+      link(rel='stylesheet', href='css/' + version + '-electerm.css')
+      style(id='theme-css').
+      style(id='custom-css').
   body
+    - if (isDev)
+      style(id='theme-css').
+      style(id='custom-css').
     #container
     #content-loading
       .morph-shape.iblock.pd3
         img.iblock.logo-filter(src='images/electerm.png', alt='', height=80)
     script.
       window.et = !{JSON.stringify(_global)}
-    script(src='../node_modules/lodash/lodash.min.js')
+    - var url1 = '/src/client/entry/rle.js'
+    - var url = '/src/client/entry/basic.js'
     - if (isDev)
-      script(src='../node_modules/react/umd/react.development.js?' + version)
-      script(src='../node_modules/react-dom/umd/react-dom.development.js?' + version)
+      //- script(src='/external/react.development.js?' + version)
+      //- script(src='/external/react-dom.development.js?' + version)
+      script(type='module').
+        import RefreshRuntime from '/@react-refresh'
+        RefreshRuntime.injectIntoGlobalHook(window)
+        window.$RefreshReg$ = () => {}
+        window.$RefreshSig$ = () => (type) => type
+        window.__vite_plugin_react_preamble_installed__ = true
+      script(src='/@vite/client', type='module')
+      script(src=url1, type='module')
+      script(src=url, type='module')
     - else
-      script(src='./external/react.production.min.js?' + version)
-      script(src='./external/react-dom.production.min.js?' + version)
-    script(src='js/basic.js?' + version)
+      //- script(src='/external/react.production.min.js?' + version)
+      //- script(src='/external/react-dom.production.min.js?' + version)
+      - var url = src='/js/basic-' + version + '.js'
+      - var url1 = src='/js/rle-' + version + '.js'
+      script(src=url1, type='module')
+      script(src=url, type='module')
+

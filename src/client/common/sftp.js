@@ -2,12 +2,12 @@
  * sftp through ws
  */
 
-import { nanoid as generate } from 'nanoid/non-secure'
+import generate from './uid'
 import Transfer from './transfer'
-import { transferTypeMap } from './constants'
+import { transferTypeMap, instSftpKeys as keys } from './constants'
 import initWs from './ws'
-import { instSftpKeys as keys } from '../../app/common/constants'
 
+window.sftps = {}
 const transferKeys = Object.keys(transferTypeMap)
 
 class Sftp {
@@ -57,6 +57,7 @@ class Sftp {
   }
 
   async destroy () {
+    delete window.sftps[this.sessionId]
     const { ws } = this
     ws.s({
       action: 'sftp-destroy',
@@ -70,5 +71,6 @@ class Sftp {
 export default async (sessionId) => {
   const sftp = new Sftp()
   await sftp.init(sessionId)
+  window.sftps[sessionId] = sftp
   return sftp
 }

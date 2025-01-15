@@ -2,7 +2,7 @@
  * transfer through ws
  */
 
-import { nanoid as generate } from 'nanoid/non-secure'
+import generate from './uid'
 import initWs from './ws'
 
 const keys = window.pre.transferKeys
@@ -53,11 +53,13 @@ class Transfer {
     ws.addEventListener('message', this.onData)
     ws.once((arg) => {
       onEnd(arg)
+      th.onDestroy(ws)
     }, 'transfer:end:' + id)
     ws.once((arg) => {
       log.debug('sftp transfer error')
       log.debug(arg.error.stack)
       onError(new Error(arg.error.message))
+      th.onDestroy(ws)
     }, 'transfer:err:' + id)
   }
 

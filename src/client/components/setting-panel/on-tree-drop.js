@@ -5,11 +5,10 @@
 import {
   defaultBookmarkGroupId
 } from '../../common/constants'
-import _ from 'lodash'
+import { isEqual, find, last, remove } from 'lodash-es'
 import copy from 'json-deep-copy'
 
 export default (info, props) => {
-  // console.log(info)
   const {
     dropToGap,
     dragNode,
@@ -23,23 +22,23 @@ export default (info, props) => {
   const toPoses = node.pos.split('-').map(Number)
   const toPosesLevel = toPoses.slice(0, toPoses.length - 1)
   const isSameLevel = fromPosesLevel.length === toPosesLevel.length
-  const isSameCat = _.isEqual(fromPosesLevel, toPosesLevel) && dropToGap
+  const isSameCat = isEqual(fromPosesLevel, toPosesLevel) && dropToGap
   const bookmarks = copy(props.bookmarks)
   const bookmarkGroups = copy(
     props.bookmarkGroups
   )
-  let from = _.find(
+  let from = find(
     bookmarks,
     d => d.id === fromId
-  ) || _.find(
+  ) || find(
     bookmarkGroups,
     d => d.id === fromId
   )
   const fromLeaf = !!from && !from.bookmarkIds
-  let to = _.find(
+  let to = find(
     bookmarks,
     d => d.id === toId
-  ) || _.find(
+  ) || find(
     bookmarkGroups,
     d => d.id === toId
   )
@@ -62,7 +61,6 @@ export default (info, props) => {
 
   // drag default cateogry to nongap
   if (fromId === defaultBookmarkGroupId && !dropToGap) {
-    // console.log('return', 'drag default cateogry to nongap')
     return
   }
 
@@ -91,11 +89,11 @@ export default (info, props) => {
   let fromGroup = null
   if (fromPoses.length > 2) {
     fromGroup = fromLeaf
-      ? _.find(
+      ? find(
         bookmarkGroups,
         d => (d.bookmarkIds || []).includes(fromId)
       )
-      : _.find(
+      : find(
         bookmarkGroups,
         d => (d.bookmarkGroupIds || []).includes(fromId)
       )
@@ -104,7 +102,7 @@ export default (info, props) => {
   const toFirstLevel = toPoses.length === 2 && dropToGap
   if (!toFirstLevel) {
     toGroup = dropToGap
-      ? _.find(
+      ? find(
         bookmarkGroups,
         d => {
           const arr = toLeaf
@@ -114,16 +112,16 @@ export default (info, props) => {
         }
       )
       : (
-        toLeaf
-          ? _.find(
-            bookmarkGroups,
-            d => (d.bookmarkIds || []).includes(toId)
-          )
-          : _.find(
-            bookmarkGroups,
-            d => d.id === toId
-          )
-      )
+          toLeaf
+            ? find(
+              bookmarkGroups,
+              d => (d.bookmarkIds || []).includes(toId)
+            )
+            : find(
+              bookmarkGroups,
+              d => d.id === toId
+            )
+        )
   }
   let nodeIndex = 0
   if (toGroup) {
@@ -131,29 +129,29 @@ export default (info, props) => {
       ? toGroup.bookmarkIds || []
       : toGroup.bookmarkGroupIds || []
     nodeIndex = dropToGap
-      ? _.findIndex(pool, d => d === toId)
+      ? pool.findIndex(d => d === toId)
       : pool.length
     if (dropToGap) {
       if (fromLeaf) {
-        nodeIndex = dropPosition < _.last(toPoses)
+        nodeIndex = dropPosition < last(toPoses)
           ? nodeIndex - 1
           : nodeIndex + 1
       } else {
-        nodeIndex = dropPosition < _.last(toPoses)
+        nodeIndex = dropPosition < last(toPoses)
           ? nodeIndex
           : nodeIndex + 1
       }
     }
   } else {
-    nodeIndex = _.findIndex(bookmarkGroups, d => {
+    nodeIndex = bookmarkGroups.findIndex(d => {
       return d.id === toId
     })
     if (fromLeaf) {
-      nodeIndex = dropPosition < _.last(toPoses)
+      nodeIndex = dropPosition < last(toPoses)
         ? nodeIndex - 1
         : nodeIndex + 1
     } else {
-      nodeIndex = dropPosition < _.last(toPoses)
+      nodeIndex = dropPosition < last(toPoses)
         ? nodeIndex
         : nodeIndex + 1
     }
@@ -167,22 +165,22 @@ export default (info, props) => {
   }
   const updates = []
   if (toFirstLevel) {
-    fromIndex = _.findIndex(bookmarkGroups, d => d.id === fromId)
+    fromIndex = bookmarkGroups.findIndex(d => d.id === fromId)
     from = copy(from)
     bookmarkGroups.splice(fromIndex, 1, 'tobedel')
     bookmarkGroups.splice(nodeIndex, 0, from)
-    _.remove(bookmarkGroups, d => d === 'tobedel')
+    remove(bookmarkGroups, d => d === 'tobedel')
     if (fromGroup) {
-      _.remove(fromGroup.bookmarkGroupIds, d => d === fromId)
+      remove(fromGroup.bookmarkGroupIds, d => d === fromId)
     }
   } else if (fromGroup) {
     const arr = fromLeaf
       ? fromGroup.bookmarkIds
       : fromGroup.bookmarkGroupIds
-    fromIndex = _.findIndex(arr, d => d === fromId)
+    fromIndex = arr.findIndex(d => d === fromId)
     isSameCat
       ? arr.splice(fromIndex, 1, 'tobedel')
-      : _.remove(arr, d => d === fromId)
+      : remove(arr, d => d === fromId)
   }
   if (!toFirstLevel) {
     const arr = !fromLeaf
@@ -190,7 +188,7 @@ export default (info, props) => {
       : toGroup.bookmarkIds
     arr.splice(nodeIndex, 0, fromId)
     if (isSameCat) {
-      _.remove(arr, d => d === 'tobedel')
+      remove(arr, d => d === 'tobedel')
     }
   }
   if (fromGroup) {
@@ -219,8 +217,6 @@ export default (info, props) => {
       upsert: false
     })
   }
-  props.store.storeAssign({
-    bookmarkGroups
-  })
+  props.store.setBookmarkGroups(bookmarkGroups)
   props.store.batchDbUpdate(updates)
 }

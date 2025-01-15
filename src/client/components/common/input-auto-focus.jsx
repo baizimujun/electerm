@@ -3,11 +3,17 @@
  */
 
 import { Input } from 'antd'
+import InputNative from './native-input'
 import React from 'react'
-import ReactDOM from 'react-dom'
-import _ from 'lodash'
+import { findLastIndex } from 'lodash-es'
+import uid from '../../common/uid'
 
 export default class InputAutoFocus extends React.PureComponent {
+  constructor (props) {
+    super(props)
+    this.uid = 'InputAutoFocus-' + uid()
+  }
+
   componentDidMount () {
     this.timer = setTimeout(this.doFocus, 50)
   }
@@ -29,7 +35,7 @@ export default class InputAutoFocus extends React.PureComponent {
     const dom = this.getDom()
     if (dom && dom.focus) {
       const { value, selectall = false } = this.props
-      const index = _.findLastIndex(value, v => v === '.')
+      const index = findLastIndex(value, v => v === '.')
       const hasExt = index > 0
       if (value && !selectall && hasExt) {
         dom.focus()
@@ -41,7 +47,7 @@ export default class InputAutoFocus extends React.PureComponent {
   }
 
   getDom () {
-    const root = ReactDOM.findDOMNode(this)
+    const root = document.querySelector(`[data-id="${this.uid}"]`)
     const dom = root.tagName === 'INPUT'
       ? root
       : root.querySelector('input')
@@ -52,10 +58,11 @@ export default class InputAutoFocus extends React.PureComponent {
     const { type, ...rest } = this.props
     const Dom = type === 'password'
       ? Input.Password
-      : Input
+      : type === 'native' ? InputNative : Input
     return (
       <Dom
         {...rest}
+        data-id={this.uid}
       />
     )
   }

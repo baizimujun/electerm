@@ -2,26 +2,22 @@
  * context menu related functions
  */
 
-export default store => {
-  Object.assign(store, {
-    initContextEvent () {
-      const dom = document.getElementById('outside-context')
-      dom && dom.addEventListener('click', store.closeContextMenu)
-    },
+import postMessage from '../common/post-msg'
+import {
+  commonActions
+} from '../common/constants'
 
-    openContextMenu (contextMenuProps) {
-      store.storeAssign({
-        contextMenuProps,
-        contextMenuVisible: true
-      })
-      store.initContextEvent()
-    },
+export default Store => {
+  Store.prototype.openContextMenu = function (data) {
+    postMessage({
+      data,
+      type: commonActions.openContextMenu
+    })
+  }
 
-    closeContextMenu () {
-      store.storeAssign({
-        contextMenuVisible: false
-      })
-      store.dom && store.dom.removeEventListener('click', store.closeContextMenu)
-    }
-  })
+  Store.prototype.closeContextMenu = function () {
+    postMessage({
+      action: commonActions.closeContextMenu
+    })
+  }
 }

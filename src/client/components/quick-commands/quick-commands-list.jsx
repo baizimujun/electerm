@@ -4,27 +4,26 @@
 
 import List from '../setting-panel/list'
 import { PlusOutlined } from '@ant-design/icons'
-import { Select, Tooltip } from 'antd'
+import { Select } from 'antd'
 import classnames from 'classnames'
 import highlight from '../common/highlight'
-import { settingMap } from '../../common/constants'
 import QmTransport from './quick-command-transport'
+import onDrop from './on-drop'
 
 const { Option } = Select
-const { prefix } = window
-const q = prefix('quickCommands')
+const e = window.translate
 
 export default class QuickCommandsList extends List {
   del = (item, e) => {
     e.stopPropagation()
-    this.props.store.delItem(item, settingMap.quickCommands)
+    this.props.store.delQuickCommand(item)
   }
 
   onClickItem = (item) => {
     this.props.onClickItem(item)
   }
 
-  handleChange = v => {
+  handleChangeLabel = v => {
     this.setState({
       labels: v
     })
@@ -34,7 +33,23 @@ export default class QuickCommandsList extends List {
     return this.props.store.quickCommandTags
   }
 
+  handleDragOver = e => {
+    e.preventDefault()
+  }
+
+  handleDragStart = e => {
+    e.dataTransfer.setData('idDragged', e.target.getAttribute('data-id'))
+  }
+
+  // adjust window.store.quickCommands array order when drop, so that the dragged item will be placed at the right position, e.target.getAttribute('data-id') would target item id, e.dataTransfer.getData('idDragged') would target dragged item id
+  handleDrop = e => {
+    onDrop(e)
+  }
+
   renderItem = (item, i) => {
+    if (!item) {
+      return null
+    }
     const { activeItemId } = this.props
     const { name, id } = item
     const cls = classnames(
@@ -53,20 +68,20 @@ export default class QuickCommandsList extends List {
         key={i + id}
         className={cls}
         onClick={() => this.onClickItem(item)}
+        data-id={id}
+        draggable
+        onDragOver={this.handleDragOver}
+        onDragStart={this.handleDragStart}
+        onDrop={this.handleDrop}
       >
-        <Tooltip
-          title={name}
-          placement='topLeft'
-        >
-          <div className='elli pd1y pd2x'>
-            {
-              !id
-                ? <PlusOutlined className='mg1r' />
-                : null
-            }
-            {title}
-          </div>
-        </Tooltip>
+        <div className='elli pd1y pd2x' title={name}>
+          {
+            !id
+              ? <PlusOutlined className='mg1r' />
+              : null
+          }
+          {title}
+        </div>
         {this.renderDelBtn(item)}
       </div>
     )
@@ -83,10 +98,10 @@ export default class QuickCommandsList extends List {
   renderLabels = () => {
     const arr = this.getLabels()
     const props = {
-      placeholder: q('labels'),
+      placeholder: e('labels'),
       mode: 'multiple',
       value: this.state.labels,
-      onChange: this.handleChange,
+      onChange: this.handleChangeLabel,
       style: {
         width: '100%'
       }
@@ -125,7 +140,6 @@ export default class QuickCommandsList extends List {
       : list
     return labels.length
       ? f.filter(d => {
-        console.log('dd', d, labels)
         return labels.some(label => {
           return (d.labels || []).includes(label)
         })
