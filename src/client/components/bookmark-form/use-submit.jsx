@@ -10,21 +10,18 @@ import {
   Button,
   Form
 } from 'antd'
-import {
-  settingMap
-} from '../../common/constants'
 import { tailFormItemLayout } from '../../common/form-layout'
 import useFuncs from './use-form-funcs'
 
 const FormItem = Form.Item
-const { prefix } = window
-const e = prefix('form')
+const e = window.translate
 
 export default function useBookmarkSubmit (props) {
   const [
     form,
     save,
     saveAndCreateNew,
+    connect,
     testConnection,
     handleFinish
   ] = useFuncs(props)
@@ -35,29 +32,34 @@ export default function useBookmarkSubmit (props) {
           type='primary'
           htmlType='submit'
           className='mg1r mg1b'
-        >{e('saveAndConnect')}</Button>
-        {
-          settingMap.history === props.type
-            ? null
-            : (
-              <Button
-                type='primary'
-                className='mg1r mg1b'
-                onClick={saveAndCreateNew}
-              >{e('saveAndCreateNew')}</Button>
-            )
-        }
+        >{e('saveAndConnect')}
+        </Button>
         <Button
-          type='ghost'
+          type='primary'
+          className='mg1r mg1b'
+          onClick={saveAndCreateNew}
+        >{e('saveAndCreateNew')}
+        </Button>
+        <Button
+          type='dashed'
           className='mg1r mg1b'
           onClick={save}
-        >{e('save')}</Button>
+        >{e('save')}
+        </Button>
       </p>
       <p>
         <Button
-          type='ghost'
+          type='dashed'
+          onClick={connect}
+          className='mg1r mg1b'
+        >{e('connect')}
+        </Button>
+        <Button
+          type='dashed'
           onClick={testConnection}
-        >{e('testConnection')}</Button>
+          className='mg1r mg1b'
+        >{e('testConnection')}
+        </Button>
       </p>
     </FormItem>
   )

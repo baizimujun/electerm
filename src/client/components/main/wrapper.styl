@@ -1,6 +1,4 @@
 @require '../../css/includes/theme-default'
-#container
-  min-width 600px
 .common-err-desc
   &:hover
     text-overflow clip
@@ -8,18 +6,33 @@
     white-space pre
     max-height 300px
     overflow scroll
-.ssh-wrap-show
-  margin-left 43px
-.pinned .ssh-wrap-show
-  margin-left 343px
+// .pinned .sessions
+//   margin-left 343px
 .error-wrapper
-  background main-light
+  background main
   height 100%
   position fixed
+  color text
+  overflow-y scroll
 .init-wrap
+.loading-data
   position fixed
   left 0
   top 0
   width 100%
   height 100%
-  background main-light
+  background-color main-light
+.loading-data
+  text-align center
+  font-size 30px
+  color text
+  padding 50px
+  z-index 210
+  .ant-tag
+    border-radius 3px
+    padding 4px
+    font-size 14px
+.loaded
+  .loading-data
+    display none
+

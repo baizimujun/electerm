@@ -15,6 +15,7 @@ import {
   TreeSelect
 } from 'antd'
 import { formItemLayout } from '../../common/form-layout'
+import parseInt10 from '../../common/parse-int10'
 import {
   commonBaudRates,
   commonDataBits,
@@ -24,22 +25,19 @@ import {
   newBookmarkIdPrefix
 } from '../../common/constants'
 import formatBookmarkGroups from './bookmark-group-tree-format'
-import defaultSettings from '../../../app/common/default-setting'
+import defaultSettings from '../../common/default-setting'
 import findBookmarkGroupId from '../../common/find-bookmark-group-id'
 import useSubmit from './use-submit'
 import useUI from './use-ui'
 import useQm from './use-quick-commands'
 import copy from 'json-deep-copy'
-import _ from 'lodash'
+import { defaults } from 'lodash-es'
+import { getRandomDefaultColor } from '../../common/rand-hex-color.js'
+import { ColorPickerItem } from './color-picker-item.jsx'
 
-const { TabPane } = Tabs
 const FormItem = Form.Item
 const { Option } = Select
-const { prefix } = window
-const e = prefix('form')
-const c = prefix('common')
-const s = prefix('setting')
-const m = prefix('menu')
+const e = window.translate
 
 export default function SerialFormUi (props) {
   const [
@@ -68,6 +66,7 @@ export default function SerialFormUi (props) {
     : currentBookmarkGroupId
   let initialValues = copy(props.formData)
   const defaultValues = {
+    color: getRandomDefaultColor(),
     baudRate: 9600,
     dataBits: 8,
     lock: true,
@@ -79,10 +78,12 @@ export default function SerialFormUi (props) {
     xany: false,
     type: terminalSerialType,
     term: defaultSettings.terminalType,
+    displayRaw: false,
     category: initBookmarkGroupId,
+    runScripts: [{}],
     ignoreKeyboardInteractive: false
   }
-  initialValues = _.defaults(initialValues, defaultValues)
+  initialValues = defaults(initialValues, defaultValues)
   function renderCommon () {
     const {
       bookmarkGroups = [],
@@ -92,6 +93,14 @@ export default function SerialFormUi (props) {
     const tree = formatBookmarkGroups(bookmarkGroups)
     return (
       <div className='pd1x'>
+        <FormItem
+          {...formItemLayout}
+          label={e('title')}
+          name='title'
+          hasFeedback
+        >
+          <Input addonBefore={<ColorPickerItem />} />
+        </FormItem>
         <FormItem
           {...formItemLayout}
           label='path'
@@ -110,8 +119,8 @@ export default function SerialFormUi (props) {
             />
           </FormItem>
           <Spin spinning={loaddingSerials}>
-            <span onClick={props.store.getSerials}>
-              <ReloadOutlined /> {m('reload')} serials
+            <span onClick={props.store.handleGetSerials}>
+              <ReloadOutlined /> {e('reload')} serials
             </span>
           </Spin>
         </FormItem>
@@ -119,7 +128,7 @@ export default function SerialFormUi (props) {
           {...formItemLayout}
           label='baudRate'
           name='baudRate'
-          normalize={parseInt}
+          normalize={parseInt10}
         >
           <AutoComplete
             options={commonBaudRates.map(d => {
@@ -133,7 +142,7 @@ export default function SerialFormUi (props) {
           {...formItemLayout}
           label='dataBits'
           name='dataBits'
-          normalize={parseInt}
+          normalize={parseInt10}
         >
           <Select>
             {
@@ -233,19 +242,11 @@ export default function SerialFormUi (props) {
         </FormItem>
         <FormItem
           {...formItemLayout}
-          label={e('title')}
-          name='title'
-          hasFeedback
-        >
-          <Input />
-        </FormItem>
-        <FormItem
-          {...formItemLayout}
           label={e('description')}
           name='description'
           hasFeedback
         >
-          <Input.TextArea rows={1} />
+          <Input.TextArea autoSize={{ minRows: 1 }} />
         </FormItem>
         <FormItem
           {...formItemLayout}
@@ -257,7 +258,7 @@ export default function SerialFormUi (props) {
         </FormItem>
         <FormItem
           {...formItemLayout}
-          label={c('bookmarkCategory')}
+          label={e('bookmarkCategory')}
           name='category'
         >
           <TreeSelect
@@ -271,18 +272,28 @@ export default function SerialFormUi (props) {
   }
 
   function renderTabs () {
+    const items = [
+      {
+        key: 'auth',
+        label: e('auth'),
+        forceRender: true,
+        children: renderCommon()
+      },
+      {
+        key: 'settings',
+        label: e('settings'),
+        forceRender: true,
+        children: uis
+      },
+      {
+        key: 'quickCommands',
+        label: e('quickCommands'),
+        forceRender: true,
+        children: qms
+      }
+    ]
     return (
-      <Tabs>
-        <TabPane tab={e('auth')} key='auth' forceRender>
-          {renderCommon()}
-        </TabPane>
-        <TabPane tab={s('settings')} key='settings' forceRender>
-          {uis}
-        </TabPane>
-        <TabPane tab={e('quickCommands')} key='quickCommands' forceRender>
-          {qms}
-        </TabPane>
-      </Tabs>
+      <Tabs items={items} />
     )
   }
 

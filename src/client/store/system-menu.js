@@ -3,7 +3,7 @@
  */
 
 import { Modal } from 'antd'
-import _ from 'lodash'
+import { isString } from 'lodash-es'
 import getInitItem from '../common/init-setting-item'
 import {
   settingMap,
@@ -11,102 +11,88 @@ import {
   minZoom
 } from '../common/constants'
 
-const { prefix } = window
-const m = prefix('menu')
-const c = prefix('common')
+const e = window.translate
 
-export default store => {
-  Object.assign(store, {
-    openMenu () {
-      store.menuOpened = true
-    },
-
-    closeMenu () {
-      store.menuOpened = false
-    },
-
-    onCloseMenu () {
-      const dom = document.getElementById('outside-context')
-      dom && dom.removeEventListener('click', store.closeContextMenu)
-    },
-    zoom (level = 1, plus = false, zoomOnly) {
-      let nl = plus
-        ? window.pre.getZoomFactor() + level
-        : level
-      if (nl > maxZoom) {
-        nl = maxZoom
-      } else if (nl < minZoom) {
-        nl = minZoom
-      }
-      window.pre.setZoomFactor(nl)
-      if (zoomOnly) {
-        return
-      }
-      store.config.zoom = nl
-    },
-
-    onCloseAbout (cb) {
-      store.showInfoModal = false
-      if (_.isFunction(cb)) {
-        cb()
-      }
-      store.focus()
-    },
-
-    openAbout (tab) {
-      store.showInfoModal = true
-      if (_.isString(tab)) {
-        store.infoModalTab = tab
-      }
-    },
-    initMenuEvent () {
-      const dom = document.getElementById('outside-context')
-      dom && dom.addEventListener('click', store.closeMenu)
-    },
-
-    onNewSsh () {
-      store.storeAssign({
-        tab: settingMap.bookmarks,
-        settingItem: getInitItem([], settingMap.bookmarks),
-        autofocustrigger: +new Date()
-      })
-      store.openModal()
-    },
-
-    confirmExit (type) {
-      let mod = null
-      mod = Modal.confirm({
-        onCancel: () => mod.destroy(),
-        onOk: store[type],
-        title: m('quit'),
-        okText: c('ok'),
-        cancelText: c('cancel'),
-        content: ''
-      })
-    },
-
-    exit () {
-      if (store.isTransporting) {
-        store.confirmExit('doExit')
-      } else {
-        store.doExit()
-      }
-    },
-
-    restart () {
-      if (store.isTransporting) {
-        store.confirmExit('doRestart')
-      } else {
-        store.doRestart()
-      }
-    },
-
-    doExit () {
-      window.pre.runGlobalAsync('closeApp')
-    },
-
-    doRestart () {
-      window.pre.runGlobalAsync('restart')
+export default Store => {
+  Store.prototype.zoom = function (level = 1, plus = false, zoomOnly) {
+    let nl = plus
+      ? window.pre.getZoomFactor() + level
+      : level
+    if (nl > maxZoom) {
+      nl = maxZoom
+    } else if (nl < minZoom) {
+      nl = minZoom
     }
-  })
+    window.pre.setZoomFactor(nl)
+    if (zoomOnly) {
+      return
+    }
+    window.store.updateConfig({
+      zoom: nl
+    })
+  }
+
+  Store.prototype.onZoomIn = function () {
+    window.store.zoom(0.25, true)
+  }
+
+  Store.prototype.onZoomout = function () {
+    window.store.zoom(-0.25, true)
+  }
+
+  Store.prototype.onZoomReset = function () {
+    window.store.zoom()
+  }
+
+  Store.prototype.openAbout = function (tab) {
+    const { store } = window
+    store.showInfoModal = true
+    if (isString(tab)) {
+      store.infoModalTab = tab
+    }
+  }
+
+  Store.prototype.onNewSsh = function () {
+    const { store } = window
+    store.storeAssign({
+      settingTab: settingMap.bookmarks
+    })
+    store.setSettingItem(getInitItem([], settingMap.bookmarks))
+    store.openSettingModal()
+  }
+
+  Store.prototype.onNewWindow = async function () {
+    window.pre.runGlobalAsync('openNewInstance')
+  }
+
+  Store.prototype.confirmExit = function (type) {
+    const { store } = window
+    let mod = null
+    mod = Modal.confirm({
+      onCancel: () => mod.destroy(),
+      onOk: store.doExit,
+      title: e('quit'),
+      okText: e('ok'),
+      cancelText: e('cancel'),
+      content: ''
+    })
+  }
+
+  Store.prototype.exit = function () {
+    window.exitFunction = 'doExit'
+    window.store.doExit()
+  }
+
+  Store.prototype.restart = function () {
+    window.exitFunction = 'doRestart'
+    window.store.doRestart()
+  }
+
+  Store.prototype.doExit = function () {
+    window.pre.runGlobalAsync('closeApp', 'exit')
+  }
+
+  Store.prototype.doRestart = function () {
+    window.pre.runGlobalAsync('restart', 'restart')
+  }
 }

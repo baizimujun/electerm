@@ -1,28 +1,17 @@
-
 import { Component } from 'react'
-import ZmodemTransfer from './zmodem-transfer'
 import { handleErr } from '../../common/fetch'
-import { mergeProxy } from '../../common/merge-proxy'
-import { nanoid as generate } from 'nanoid/non-secure'
-import _ from 'lodash'
-import { runCmds } from '../terminal-info/run-cmd'
-
+import generate from '../../common/uid'
+import { isEqual, pick, debounce, throttle } from 'lodash-es'
+import clone from '../../common/to-simple-obj'
+// import runIdle from '../../common/run-idle'
 import {
-  BorderHorizontalOutlined,
-  CheckCircleOutlined,
-  CloseOutlined,
-  CopyOutlined,
-  LeftOutlined,
-  ReloadOutlined,
-  RightOutlined,
-  SearchOutlined,
-  SelectOutlined,
-  SwitcherOutlined
+  ReloadOutlined
 } from '@ant-design/icons'
-
-import { Spin, Modal, Button, Checkbox, Select } from 'antd'
-import encodes from '../bookmark-form/encodes'
-import Input from '../common/input-auto-focus'
+import {
+  notification,
+  Spin,
+  Button
+} from 'antd'
 import classnames from 'classnames'
 import './terminal.styl'
 import {
@@ -30,39 +19,38 @@ import {
   paneMap,
   typeMap,
   isWin,
-  isMac,
-  terminalSshConfigType,
   transferTypeMap,
-  defaultLoginScriptDelay
+  commonActions,
+  rendererTypes,
+  cwdId,
+  isMac,
+  zmodemTransferPackSize
 } from '../../common/constants'
 import deepCopy from 'json-deep-copy'
-import { readClipboard, copy } from '../../common/clipboard'
-import { FitAddon } from 'xterm-addon-fit'
+import { readClipboardAsync, copy } from '../../common/clipboard'
+import { FitAddon } from '@xterm/addon-fit'
 import AttachAddon from './attach-addon-custom'
-import { SearchAddon } from 'xterm-addon-search'
-import { WebLinksAddon } from 'xterm-addon-web-links'
-import { Zmodem, AddonZmodem } from './xterm-zmodem'
-import { Unicode11Addon } from 'xterm-addon-unicode11'
+import { SearchAddon } from '@xterm/addon-search'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { CanvasAddon } from '@xterm/addon-canvas'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { LigaturesAddon } from '@xterm/addon-ligatures'
+import getProxy from '../../common/get-proxy'
+import { AddonZmodem } from './xterm-zmodem'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import keyControlPressed from '../../common/key-control-pressed'
-import keyShiftPressed from '../../common/key-shift-pressed'
-import keyPressed from '../../common/key-pressed'
-import { Terminal } from 'xterm'
-import TerminalInfoIcon from '../terminal-info'
-import Qm from '../quick-commands/quick-commands-select'
-// import resolve from '../../common/resolve'
-import BatchInput from './batch-input'
-// import filesize from 'filesize'
-// import Link from '../common/external-link'
+import { Terminal } from '@xterm/xterm'
 import NormalBuffer from './normal-buffer'
 import { createTerm, resizeTerm } from './terminal-apis'
+import { shortcutExtend, shortcutDescExtend } from '../shortcuts/shortcut-handler.js'
+import { KeywordHighlighterAddon } from './highlight-addon.js'
+import { getLocalFileInfo } from '../sftp/file-read.js'
+import { CommandTrackerAddon } from './command-tracker-addon.js'
+import { formatBytes } from '../../common/byte-format.js'
+import * as fs from './fs.js'
+import refs from '../common/ref'
 
-const { prefix } = window
-const e = prefix('ssh')
-const m = prefix('menu')
-const f = prefix('form')
-const c = prefix('common')
-const authFailMsg = 'All configured authentication methods failed'
-const privateKeyMsg = 'private key detected'
+const e = window.translate
 
 const computePos = (e) => {
   return {
@@ -71,33 +59,35 @@ const computePos = (e) => {
   }
 }
 
-export default class Term extends Component {
+class Term extends Component {
   constructor (props) {
     super(props)
     this.state = {
-      pid: '',
-      id: props.id || 'id' + generate(),
       loading: false,
-      promoteModalVisible: false,
-      savePassword: false,
-      tempPassword: '',
-      searchVisible: false,
-      searchInput: '',
+      saveTerminalLogToFile: !!this.props.config.saveTerminalLogToFile,
+      addTimeStampToTermLog: !!this.props.config.addTimeStampToTermLog,
       passType: 'password',
-      zmodemTransfer: null,
       lines: []
     }
   }
 
   componentDidMount () {
+    this.id = `term-${this.props.tab.id}`
+    refs.add(this.id, this)
     this.initTerminal()
     this.initEvt()
+    if (this.props.tab.enableSsh === false) {
+      ;(
+        document.querySelector('.session-current .term-sftp-tabs .type-tab.sftp') ||
+        document.querySelector('.session-current .term-sftp-tabs .type-tab.fileManager')
+      ).click()
+    }
   }
 
   componentDidUpdate (prevProps) {
     const shouldChange = (
-      prevProps.currentTabId !== this.props.currentTabId &&
-      this.props.tab.id === this.props.currentTabId &&
+      prevProps.currentBatchTabId !== this.props.currentBatchTabId &&
+      this.props.tab.id === this.props.currentBatchTabId &&
       this.props.pane === paneMap.terminal
     ) || (
       this.props.pane !== prevProps.pane &&
@@ -110,9 +100,9 @@ export default class Term extends Component {
       'top'
     ]
     if (
-      !_.isEqual(
-        _.pick(this.props, names),
-        _.pick(prevProps, names)
+      !isEqual(
+        pick(this.props, names),
+        pick(prevProps, names)
       ) ||
       shouldChange
     ) {
@@ -125,32 +115,84 @@ export default class Term extends Component {
       prevProps,
       this.props
     )
-    const themeChanged = !_.isEqual(
+    const themeChanged = !isEqual(
       this.props.themeConfig,
       prevProps.themeConfig
     )
     if (themeChanged) {
-      this.term.setOption('theme', this.props.themeConfig)
+      this.term.options.theme = {
+        ...deepCopy(this.props.themeConfig),
+        background: 'rgba(0,0,0,0)'
+      }
+    }
+
+    const sftpPathFollowSshChanged = !isEqual(
+      this.props.sftpPathFollowSsh,
+      prevProps.sftpPathFollowSsh
+    )
+
+    if (sftpPathFollowSshChanged) {
+      const ps1Cmd = `\recho $0|grep csh >/dev/null && set prompt_bak="$prompt" && set prompt="$prompt${cwdId}%/${cwdId}"\r
+echo $0|grep zsh >/dev/null && PS1_bak=$PS1&&PS1=$PS1'${cwdId}%d${cwdId}'\r
+echo $0|grep ash >/dev/null && PS1_bak=$PS1&&PS1=$PS1'\`echo ${cwdId}$PWD${cwdId}\`'\r
+echo $0|grep ksh >/dev/null && PS1_bak=$PS1&&PS1=$PS1'\`echo ${cwdId}$PWD${cwdId}\`'\r
+echo $0|grep '^sh' >/dev/null && PS1_bak=$PS1&&PS1=$PS1'\`echo ${cwdId}$PWD${cwdId}\`'\r
+clear\r`
+      const ps1RestoreCmd = `\recho $0|grep csh >/dev/null && set prompt="$prompt_bak"\r
+echo $0|grep zsh >/dev/null && PS1="$PS1_bak"\r
+echo $0|grep ash >/dev/null && PS1="$PS1_bak"\r
+echo $0|grep ksh >/dev/null && PS1="$PS1_bak"\r
+echo $0|grep '^sh' >/dev/null && PS1="$PS1_bak"\r
+clear\r`
+
+      if (this.props.sftpPathFollowSsh) {
+        this.socket.send(ps1Cmd)
+        this.term.cwdId = cwdId
+      } else {
+        this.socket.send(ps1RestoreCmd)
+        delete this.term.cwdId
+      }
     }
   }
 
   componentWillUnmount () {
+    refs.remove(this.id)
+    if (this.zsession) {
+      this.onZmodemEnd()
+    }
+    this.term.parent = null
     Object.keys(this.timers).forEach(k => {
       clearTimeout(this.timers[k])
+      this.timers[k] = null
     })
-    clearTimeout(this.timeoutHandler)
-    clearTimeout(this.timers)
+    this.timers = null
     this.onClose = true
-    this.socket && this.socket.close()
+    if (this.socket) {
+      this.socket.close()
+      this.socket = null
+    }
     if (this.term) {
       this.term.dispose()
+      this.term = null
     }
     window.removeEventListener(
       'resize',
       this.onResize
     )
-    window.removeEventListener('message', this.handleEvent)
     this.dom.removeEventListener('contextmenu', this.onContextMenu)
+    window.removeEventListener('message', this.onContextAction)
+    this.dom = null
+    this.attachAddon = null
+    this.fitAddon = null
+    this.zmodemAddon = null
+    this.searchAddon = null
+    this.fitAddon = null
+    this.cmdAddon = null
+    // Clear the notification if it exists
+    if (this.socketCloseWarning) {
+      notification.destroy(this.socketCloseWarning.key)
+      this.socketCloseWarning = null
+    }
   }
 
   terminalConfigProps = [
@@ -168,6 +210,18 @@ export default class Term extends Component {
     }
   ]
 
+  initAttachAddon = () => {
+    this.attachAddon = new AttachAddon(
+      this.term,
+      this.socket,
+      isWin && !this.isRemote()
+    )
+    this.attachAddon.decoder = new TextDecoder(
+      this.encode || this.props.tab.encode || 'utf-8'
+    )
+    this.term.loadAddon(this.attachAddon)
+  }
+
   getValue = (props, type, name) => {
     return type === 'glob'
       ? props.config[name]
@@ -182,7 +236,7 @@ export default class Term extends Component {
       if (
         prev !== curr
       ) {
-        this.term.setOption(name, curr)
+        this.term.options[name] = curr
         if (['fontFamily', 'fontSize'].includes(name)) {
           this.onResize()
         }
@@ -192,106 +246,91 @@ export default class Term extends Component {
 
   timers = {}
 
+  getDomId = () => {
+    return `term-${this.props.tab.id}`
+  }
+
   initEvt = () => {
-    const { id } = this.state
-    const dom = document.getElementById(id)
+    const dom = document.getElementById(this.getDomId())
     this.dom = dom
     dom.addEventListener('contextmenu', this.onContextMenu)
     window.addEventListener(
       'resize',
       this.onResize
     )
-    window.addEventListener('message', this.handleEvent)
+  }
+
+  zoom = (v) => {
+    const { term } = this
+    if (!term) {
+      return
+    }
+    term.options.fontSize = term.options.fontSize + v
+    window.store.triggerResize()
   }
 
   isActiveTerminal = () => {
-    return this.props.id === this.props.activeSplitId &&
-    this.props.tab.id === this.props.currentTabId &&
+    return this.props.tab.id === this.props.activeTabId &&
     this.props.pane === paneMap.terminal
   }
 
-  handleEvent = (e) => {
-    if (
-      e.data &&
-      e.data.type === 'batch-input' &&
-      (
-        e.data.target = this.props.id ||
-        e.data.target === 'all'
-      )
-    ) {
-      this.batchInput(e.data.cmd)
-    } else if (
-      e.data &&
-      e.data.action === 'open-terminal-search' &&
-      e.data.id === this.props.id
-    ) {
-      this.openSearch()
-    }
-    const isActiveTerminal = this.isActiveTerminal()
-    if (
-      e.data &&
-      e.data.type === 'focus' &&
-      isActiveTerminal
-    ) {
-      e.stopPropagation()
-      return this.term && this.term.focus()
-    } else if (
-      e.data &&
-      e.data.action === 'quick-command' &&
-      isActiveTerminal
-    ) {
-      e.stopPropagation()
-      this.term && e.data.command && this.attachAddon._sendData(
-        e.data.command +
-        (e.data.inputOnly ? '' : '\r')
-      )
-      this.term.focus()
-    }
+  clearShortcut = (e) => {
+    e.stopPropagation()
+    this.onClear()
+  }
 
-    if (
-      keyControlPressed(e) &&
-      keyShiftPressed(e) &&
-      keyPressed(e, 'c')
-    ) {
+  // selectAllShortcut = (e) => {
+  //   e.stopPropagation()
+  //   this.term.selectAll()
+  // }
+
+  copyShortcut = (e) => {
+    const sel = this.term.getSelection()
+    if (sel) {
       e.stopPropagation()
       this.copySelectionToClipboard()
-    } else if (e.data && e.data.id === this.props.id) {
-      e.stopPropagation()
-      this.term.selectAll()
-    } else if (
-      keyPressed(e, 'f') && keyControlPressed(e) &&
-      (
-        isMac ||
-        (!isMac && keyShiftPressed(e))
-      )
-    ) {
-      e.stopPropagation()
-      this.openSearch()
-    } else if (
-      keyPressed(e, 'tab')
-    ) {
-      e.stopPropagation()
-      e.preventDefault()
-      if (e.ctrlKey && e.type === 'keydown') {
-        this.props.store.clickNextTab()
-        return false
-      }
-    } else if (
-      keyControlPressed(e) &&
-      keyPressed(e, 'ArrowUp') && this.bufferMode === 'alternate'
-    ) {
-      e.stopPropagation()
-      this.openNormalBuffer()
-    } else if (
-      e.ctrlKey &&
-      keyPressed(e, 'tab')
-    ) {
-      this.onClear()
+      return false
     }
   }
 
+  searchShortcut = (e) => {
+    e.stopPropagation()
+    this.toggleSearch()
+  }
+
+  pasteSelectedShortcut = (e) => {
+    e.stopPropagation()
+    this.tryInsertSelected()
+  }
+
+  pasteShortcut = (e) => {
+    if (isMac) {
+      return true
+    }
+    if (!this.isRemote()) {
+      return true
+    }
+    if (this.term.buffer.active.type !== 'alternate') {
+      return false
+    }
+    return true
+  }
+
+  showNormalBufferShortcut = (e) => {
+    e.stopPropagation()
+    this.openNormalBuffer()
+  }
+
+  runQuickCommand = (cmd, inputOnly = false) => {
+    this.term && this.attachAddon._sendData(
+      cmd +
+      (inputOnly ? '' : '\r')
+    )
+    this.term.focus()
+  }
+
   onDrop = e => {
-    const files = _.get(e, 'dataTransfer.files')
+    const files = e?.dataTransfer?.files
     if (files && files.length) {
       this.attachAddon._sendData(
         Array.from(files).map(f => `"${f.path}"`).join(' ')
@@ -300,9 +339,13 @@ export default class Term extends Component {
   }
 
   onSelection = () => {
-    if (this.props.config.copyWhenSelect) {
-      this.copySelectionToClipboard()
+    if (
+      !this.props.config.copyWhenSelect ||
+      window.store.onOperation
+    ) {
+      return false
     }
+    this.copySelectionToClipboard()
   }
 
   copySelectionToClipboard = () => {
@@ -312,22 +355,22 @@ export default class Term extends Component {
     }
   }
 
-  onBlur = () => {
-    if (
-      this.props.id === this.props.activeTerminalId
-    ) {
-      this.props.store.storeAssign({
-        activeTerminalId: ''
-      })
+  tryInsertSelected = () => {
+    const txt = this.term.getSelection()
+    if (txt) {
+      this.attachAddon._sendData(txt)
     }
   }
 
   webLinkHandler = (event, url) => {
+    if (event?.button === 2) {
+      return false
+    }
     if (!this.props.config.ctrlOrMetaOpenTerminalLink) {
-      return window.open(url, '_blank')
+      return window.openLink(url, '_blank')
     }
     if (keyControlPressed(event)) {
-      window.open(url, '_blank')
+      window.openLink(url, '_blank')
     }
   }
 
@@ -335,179 +378,269 @@ export default class Term extends Component {
     log.debug('zmodemRetract')
   }
 
-  onReceiveZmodemSession = () => {
-    //  * zmodem transfer
-    //  * then run rz to send from your browser or
-    //  * sz <file> to send from the remote peer.
+  writeBanner = (type) => {
+    this.term.write('\r\nRecommmend use trzsz instead: https://github.com/trzsz/trzsz\r\n')
+    this.term.write(`\x1b[32mZMODEM::${type}::START\x1b[0m\r\n\r\n`)
+  }
+
+  onReceiveZmodemSession = async () => {
+    const savePath = await this.openSaveFolderSelect()
     this.zsession.on('offer', this.onOfferReceive)
     this.zsession.start()
+    this.term.write('\r\n\x1b[2A\r\n')
+    if (!savePath) {
+      return this.onZmodemEnd()
+    }
+    this.writeBanner('RECEIVE')
+    this.zmodemSavePath = savePath
     return new Promise((resolve) => {
       this.zsession.on('session_end', resolve)
-    }).then(this.onZmodemEnd).catch(this.onZmodemCatch)
+    })
+      .then(this.onZmodemEnd)
+      .catch(this.onZmodemCatch)
   }
 
-  updateProgress = (xfer, type) => {
-    if (this.onCancel) {
+  initZmodemDownload = async (name, size) => {
+    if (!this.zmodemSavePath) {
       return
     }
-    const fileInfo = xfer.get_details()
-    const {
-      size
-    } = fileInfo
-    const total = xfer.get_offset() || 0
-    let percent = Math.floor(100 * total / size)
-    if (percent > 99) {
-      percent = 99
+    let pth = window.pre.resolve(
+      this.zmodemSavePath, name
+    )
+    const exist = await fs.exists(pth).catch(() => false)
+    if (exist) {
+      pth = pth + '.' + generate()
     }
-    this.setState({
-      zmodemTransfer: {
-        fileInfo,
-        percent,
-        transferedSize: total,
-        type
+    const fd = await fs.open(pth, 'w').catch(this.onZmodemEnd)
+    this.downloadFd = fd
+    this.downloadPath = pth
+    this.downloadCount = 0
+    this.zmodemStartTime = Date.now()
+    this.downloadSize = size
+    this.updateZmodemProgress(
+      0, pth, size, transferTypeMap.download
+    )
+    return fd
+  }
+
+  onOfferReceive = async (xfer) => {
+    const {
+      name,
+      size
+    } = xfer.get_details()
+    if (!this.downloadFd) {
+      await this.initZmodemDownload(name, size)
+    }
+    xfer.on('input', this.onZmodemDownload)
+    this.xfer = xfer
+    await xfer.accept()
+      .then(this.finishZmodemTransfer)
+      .catch(this.onZmodemEnd)
+  }
+
+  checkCache = async () => {
+    if (this.DownloadCache?.length > 0) {
+      return fs.write(this.downloadFd, new Uint8Array(this.DownloadCache))
+    }
+  }
+
+  onZmodemDownload = async payload => {
+    if (this.onCanceling || !this.downloadFd) {
+      return
+    }
+    // if (!this.DownloadCache) {
+    //   this.DownloadCache = []
+    // }
+    // this.DownloadCache = this.DownloadCache.concat(payload)
+    // this.downloadCount += payload.length
+    // if (this.DownloadCache.length < zmodemTransferPackSize) {
+    //   return this.updateZmodemProgress(
+    //     this.downloadCount,
+    //     this.downloadPath,
+    //     this.downloadSize,
+    //     transferTypeMap.download
+    //   )
+    // }
+    // this.writeCache = this.DownloadCache
+    // this.DownloadCache = []
+    this.downloadCount += payload.length
+    await fs.write(this.downloadFd, new Uint8Array(payload))
+    this.updateZmodemProgress(
+      this.downloadCount,
+      this.downloadPath,
+      this.downloadSize,
+      transferTypeMap.download
+    )
+  }
+
+  updateZmodemProgress = throttle((start, name, size, type) => {
+    this.zmodemTransfer = {
+      type,
+      start,
+      name,
+      size
+    }
+    this.writeZmodemProgress()
+  }, 500)
+
+  finishZmodemTransfer = () => {
+    this.zmodemTransfer = {
+      ...this.zmodemTransfer,
+      start: this.zmodemTransfer.size
+    }
+    this.writeZmodemProgress()
+  }
+
+  writeZmodemProgress = () => {
+    if (this.onCanceling) {
+      return
+    }
+    const {
+      size, start, name
+    } = this.zmodemTransfer
+    const speed = size > 0 ? formatBytes(start * 1000 / 1024 / (Date.now() - this.zmodemStartTime)) : 0
+    const percent = size > 0 ? Math.floor(start * 100 / size) : 100
+    const str = `\x1b[32m${name}\x1b[0m::${percent}%,${start}/${size},${speed}/s`
+    this.term.write('\r\n\x1b[2A' + str + '\n')
+  }
+
+  zmodemTransferFile = async (file, filesRemaining, sizeRemaining) => {
+    const offer = {
+      obj: file,
+      name: file.name,
+      size: file.size,
+      files_remaining: filesRemaining,
+      bytes_remaining: sizeRemaining
+    }
+    const xfer = await this.zsession.send_offer(offer)
+    if (!xfer) {
+      this.onZmodemEnd()
+      return window.store.onError(new Error('Transfer cancelled, maybe file already exists'))
+    }
+    this.zmodemStartTime = Date.now()
+    const fd = await fs.open(file.filePath, 'r')
+    let start = 0
+    const { size } = file
+    let inited = false
+    while (start < size || !inited) {
+      const rest = size - start
+      const len = rest > zmodemTransferPackSize ? zmodemTransferPackSize : rest
+      const buffer = new Uint8Array(len)
+      const newArr = await fs.read(fd, buffer, 0, len, null)
+      const n = newArr.length
+      await xfer.send(newArr)
+      start = start + n
+      inited = true
+      this.updateZmodemProgress(start, file.name, size, transferTypeMap.upload)
+      if (n < zmodemTransferPackSize || start >= file.size || this.onCanceling) {
+        break
       }
-    })
+    }
+    await fs.close(fd)
+    this.finishZmodemTransfer()
+    await xfer.end()
   }
 
-  saveToDisk = (xfer, buffer) => {
-    return Zmodem.Browser
-      .save_to_disk(buffer, xfer.get_details().name)
+  openFileSelect = async () => {
+    const properties = [
+      'openFile',
+      'multiSelections',
+      'showHiddenFiles',
+      'noResolveAliases',
+      'treatPackageAsDirectory',
+      'dontAddToRecent'
+    ]
+    const files = await window.api.openDialog({
+      title: 'Choose some files to send',
+      message: 'Choose some files to send',
+      properties
+    }).catch(() => false)
+    if (!files || !files.length) {
+      return this.onZmodemEnd()
+    }
+    const r = []
+    for (const filePath of files) {
+      const stat = await getLocalFileInfo(filePath)
+      r.push({ ...stat, filePath })
+    }
+    return r
   }
 
-  onOfferReceive = xfer => {
-    this.updateProgress(xfer, transferTypeMap.download)
-    const FILE_BUFFER = []
-    xfer.on('input', (payload) => {
-      this.updateProgress(xfer, transferTypeMap.download)
-      FILE_BUFFER.push(new Uint8Array(payload))
-    })
-    xfer.accept()
-      .then(
-        () => {
-          this.saveToDisk(xfer, FILE_BUFFER)
-        }
-      )
-      .catch(this.props.store.onError)
-  }
-
-  // transferBySftp = async (files) => {
-  //   const pwd = await this.getPwd()
-  //   if (!pwd) {
-  //     return
-  //   }
-  //   const transfers = files.map(f => {
-  //     const { name } = getFolderFromFilePath(f.path)
-  //     return {
-  //       typeFrom: typeMap.local,
-  //       typeTo: typeMap.remote,
-  //       fromPath: f.path,
-  //       toPath: resolve(pwd, name),
-  //       id: generate()
-  //     }
-  //   })
-  //   window.postMessage({
-  //     type: 'add-transfer',
-  //     sessionId: this.props.sessionId,
-  //     transfers
-  //   }, '*')
-  //   this.props.onChangePane(paneMap.sftp)
-  // }
-
-  beforeZmodemUpload = (file, files) => {
-    if (!files.length) {
+  openSaveFolderSelect = async () => {
+    const savePaths = await window.api.openDialog({
+      title: 'Choose a folder to save file(s)',
+      message: 'Choose a folder to save file(s)',
+      properties: [
+        'openDirectory',
+        'showHiddenFiles',
+        'createDirectory',
+        'noResolveAliases',
+        'treatPackageAsDirectory',
+        'dontAddToRecent'
+      ]
+    }).catch(() => false)
+    if (!savePaths || !savePaths.length) {
       return false
     }
-    // const f = files[0]
-    // if (f.size > maxZmodemUploadSize) {
-    //   if (this.zsession) {
-    //     this.zsession.abort()
-    //   }
-    //   this.onZmodemEnd()
-    //   // if (this.props.tab.enableSftp) {
-    //   //   notification.info({
-    //   //     message: `Uploading by sftp`,
-    //   //     duration: 8
-    //   //   })
-    //   //   return this.transferBySftp(files)
-    //   // } else {
-    //   const url = 'https://github.com/FGasper/zmodemjs/issues/11'
-    //   const msg = (
-    //     <div>
-    //       <p>Currently <b>rz</b> only support upload file size less than {filesize(maxZmodemUploadSize)}, due to known issue:</p>
-    //       <p><Link to={url}>{url}</Link></p>
-    //       <p>You can try upload in sftp which is much faster.</p>
-    //     </div>
-    //   )
-    //   notification.error({
-    //     message: msg,
-    //     duration: 8
-    //   })
-    //   // }
-    // }
-    const th = this
-    Zmodem.Browser.send_files(
-      this.zsession,
-      files, {
-        on_offer_response (obj, xfer) {
-          if (xfer) {
-            th.updateProgress(xfer, transferTypeMap.upload)
-          }
-        },
-        on_progress (obj, xfer) {
-          th.updateProgress(xfer, transferTypeMap.upload)
-        }
-      }
-    )
-      .then(th.onZmodemEndSend)
-      .catch(th.onZmodemCatch)
-
-    return false
+    return savePaths[0]
   }
 
-  onSendZmodemSession = () => {
-    this.setState(() => {
-      return {
-        zmodemTransfer: {
-          type: transferTypeMap.upload
-        }
-      }
-    })
-  }
-
-  cancelZmodem = () => {
-    this.onZmodemEndSend()
-  }
-
-  onZmodemEndSend = () => {
-    this.zsession && this.zsession.close && this.zsession.close()
+  beforeZmodemUpload = async (files) => {
+    if (!files || !files.length) {
+      return false
+    }
+    this.writeBanner('SEND')
+    let filesRemaining = files.length
+    let sizeRemaining = files.reduce((a, b) => a + b.size, 0)
+    for (const f of files) {
+      await this.zmodemTransferFile(f, filesRemaining, sizeRemaining)
+      filesRemaining = filesRemaining - 1
+      sizeRemaining = sizeRemaining - f.size
+    }
     this.onZmodemEnd()
   }
 
-  onZmodemEnd = () => {
-    delete this.onZmodem
-    this.onCancel = true
-    this.attachAddon = new AttachAddon(this.socket, undefined, this.props.tab.encode)
-    if (this.decoder) {
-      this.attachAddon.decoder = this.decode
+  onSendZmodemSession = async () => {
+    this.term.write('\r\n\x1b[2A\n')
+    const files = await this.openFileSelect()
+    this.beforeZmodemUpload(files)
+  }
+
+  onZmodemEnd = async () => {
+    this.zmodemSavePath = null
+    this.onCanceling = true
+    if (this.downloadFd) {
+      await fs.close(this.downloadFd)
     }
-    this.term.loadAddon(this.attachAddon)
-    this.setState(() => {
-      return {
-        zmodemTransfer: null
-      }
-    })
+    if (this.xfer && this.xfer.end) {
+      await this.xfer.end().catch(
+        console.error
+      )
+    }
+    this.xfer = null
+    if (this.zsession && this.zsession.close) {
+      await this.zsession.close().catch(
+        console.error
+      )
+    }
+    this.zsession = null
     this.term.focus()
     this.term.write('\r\n')
+    this.onZmodem = false
+    this.downloadFd = null
+    // delete this.downloadPath
+    // delete this.downloadCount
+    // delete this.downloadSize
+    this.DownloadCache = null
   }
 
   onZmodemCatch = (e) => {
-    this.props.store.onError(e)
+    window.store.onError(e)
     this.onZmodemEnd()
   }
 
   onZmodemDetect = detection => {
-    this.onCancel = false
-    this.attachAddon.dispose()
+    this.onCanceling = false
     this.term.blur()
     this.onZmodem = true
     const zsession = detection.confirm()
@@ -519,8 +652,26 @@ export default class Term extends Component {
     }
   }
 
-  split = () => {
-    this.props.doSplit(null, this.props.id)
+  onContextAction = e => {
+    const {
+      action,
+      id,
+      args = [],
+      func
+    } = e.data || {}
+    if (action === commonActions.closeContextMenuAfter) {
+      window.removeEventListener('message', this.onContextAction)
+      return false
+    }
+    if (
+      action !== commonActions.clickContextMenu ||
+      id !== this.uid ||
+      !this[func]
+    ) {
+      return false
+    }
+    window.removeEventListener('message', this.onContextAction)
+    this[func](...args)
   }
 
   onContextMenu = e => {
@@ -531,11 +682,14 @@ export default class Term extends Component {
     if (this.props.config.pasteWhenContextMenu) {
       return this.onPaste()
     }
-    const content = this.renderContext()
-    this.props.store.openContextMenu({
-      content,
+    const items = this.renderContext()
+    this.uid = generate()
+    window.store.openContextMenu({
+      id: this.uid,
+      items,
       pos: computePos(e)
     })
+    window.addEventListener('message', this.onContextAction)
   }
 
   onCopy = () => {
@@ -544,224 +698,283 @@ export default class Term extends Component {
     this.term.focus()
   }
 
-  onSelectAll = () => {
-    this.term.selectAll()
-  }
+  // onSelectAll = () => {
+  //   this.term.selectAll()
+  // }
 
   onClear = () => {
     this.term.clear()
     this.term.focus()
+    // this.notifyOnData('')
   }
 
   isRemote = () => {
-    return _.get(this.props, 'tab.host') &&
-    _.get(this.props, 'tab.type') !== terminalSshConfigType
+    return this.props.tab?.host
   }
 
-  onPaste = () => {
-    let selected = readClipboard()
+  onPaste = async () => {
+    let selected = await readClipboardAsync()
     if (isWin && this.isRemote()) {
       selected = selected.replace(/\r\n/g, '\n')
     }
-    this.attachAddon._sendData(selected)
+    this.term.paste(selected || '')
     this.term.focus()
   }
 
-  openSearch = () => {
-    this.setState({
-      searchVisible: true
+  onPasteSelected = () => {
+    const selected = this.term.getSelection()
+    this.term.paste(selected || '')
+    this.term.focus()
+  }
+
+  toggleSearch = () => {
+    window.store.toggleTerminalSearch()
+  }
+
+  onSearchResultsChange = ({ resultIndex, resultCount }) => {
+    window.store.storeAssign({
+      termSearchMatchCount: resultCount,
+      termSearchMatchIndex: resultIndex
     })
   }
 
-  onTitleChange = e => {
-    log.debug(e, 'title change')
-  }
-
-  onChangeSearch = (e) => {
-    this.setState({
-      searchInput: e.target.value
-    })
-  }
-
-  searchPrev = () => {
+  searchPrev = (searchInput, options) => {
     this.searchAddon.findPrevious(
-      this.state.searchInput
+      searchInput, options
     )
   }
 
-  searchNext = () => {
+  searchNext = (searchInput, options) => {
     this.searchAddon.findNext(
-      this.state.searchInput
+      searchInput, options
     )
   }
-
-  searchClose = () => {
-    this.setState({
-      searchVisible: false
-    })
-  }
-
-  // onSelectTheme = id => {
-  //   this.props.store.setTheme(id)
-  //   this.props.store.closeContextMenu()
-  // }
 
   renderContext = () => {
-    const cls = 'pd2x pd1y context-item pointer'
     const hasSlected = this.term.hasSelection()
-    const clsCopy = cls +
-      (hasSlected ? '' : ' disabled')
-    const copyed = readClipboard()
-    const clsPaste = cls +
-      (copyed ? '' : ' disabled')
-    const copyShortcut = isMac
-      ? 'Command+C'
-      : 'Ctrl+Shift+C'
-    const pasteShortcut = isMac
-      ? 'Command+V'
-      : 'Ctrl+Shift+V'
-    return (
-      <div>
-        <div
-          className={clsCopy}
-          onClick={hasSlected ? this.onCopy : _.noop}
-        >
-          <CopyOutlined /> {m('copy')}
-          <span className='context-sub-text'>({copyShortcut})</span>
-        </div>
-        <div
-          className={clsPaste}
-          onClick={copyed ? this.onPaste : _.noop}
-        >
-          <SwitcherOutlined /> {m('paste')}
-          <span className='context-sub-text'>({pasteShortcut})</span>
-        </div>
-        <div
-          className={cls}
-          onClick={this.onClear}
-        >
-          <ReloadOutlined /> {e('clear')} (Ctrl+L)
-        </div>
-        <div
-          className={cls}
-          onClick={this.onSelectAll}
-        >
-          <SelectOutlined /> {e('selectAll')}
-        </div>
-        <div
-          className={cls}
-          onClick={this.openSearch}
-        >
-          <SearchOutlined /> {e('search')}
-        </div>
-        <div
-          className={cls}
-          onClick={this.split}
-        >
-          <BorderHorizontalOutlined /> {e('split')}
-        </div>
-      </div>
-    )
+    const copyed = true
+    const copyShortcut = this.getShortcut('terminal_copy')
+    const pasteShortcut = this.getShortcut('terminal_paste')
+    const clearShortcut = this.getShortcut('terminal_clear')
+    // const selectAllShortcut = this.getShortcut('terminal_selectAll')
+    const searchShortcut = this.getShortcut('terminal_search')
+    return [
+      {
+        func: 'onCopy',
+        icon: 'CopyOutlined',
+        text: e('copy'),
+        disabled: !hasSlected,
+        subText: copyShortcut
+      },
+      {
+        func: 'onPaste',
+        icon: 'SwitcherOutlined',
+        text: e('paste'),
+        disabled: !copyed,
+        subText: pasteShortcut
+      },
+      {
+        func: 'onPasteSelected',
+        icon: 'SwitcherOutlined',
+        text: e('pasteSelected'),
+        disabled: !hasSlected
+      },
+      {
+        func: 'onClear',
+        icon: 'ReloadOutlined',
+        text: e('clear'),
+        subText: clearShortcut
+      },
+      // {
+      //   func: 'onSelectAll',
+      //   icon: 'SelectOutlined',
+      //   text: e('selectAll'),
+      //   subText: selectAllShortcut
+      // },
+      {
+        func: 'toggleSearch',
+        icon: 'SearchOutlined',
+        text: e('search'),
+        subText: searchShortcut
+      }
+    ]
   }
 
-  notifyOnData = _.debounce(() => {
-    window.postMessage({
-      action: 'terminal-receive-data',
-      tabId: this.props.tab.id
-    }, '*')
-  }, 2000)
+  notifyOnData = debounce(() => {
+    window.store.notifyTabOnData(this.props.tab.id)
+  }, 1000)
 
-  onSocketData = () => {
-    this.notifyOnData()
-    clearTimeout(this.timeoutHandler)
-  }
-
-  listenTimeout = () => {
-    clearTimeout(this.timeoutHandler)
-    if (this.onZmodem) {
-      return
+  parse (rawText) {
+    let result = ''
+    const len = rawText.length
+    for (let i = 0; i < len; i++) {
+      if (rawText[i] === '\b') {
+        result = result.slice(0, -1)
+      } else {
+        result += rawText[i]
+      }
     }
-    this.timeoutHandler = setTimeout(
-      () => this.setStatus('error'),
-      this.props.config.terminalTimeout
-    )
+    return result
+  }
+
+  getCmd = () => {
+    return this.cmdAddon.getCurrentCommand()
+  }
+
+  getCwd = () => {
+    if (
+      this.props.sftpPathFollowSsh &&
+      this.term.buffer.active.type !== 'alternate' && !this.term.cwdId
+    ) {
+      this.term.cwdId = cwdId
+
+      const ps1Cmd = `\recho $0|grep csh >/dev/null && set prompt_bak="$prompt" && set prompt="$prompt${cwdId}%/${cwdId}"\r
+echo $0|grep zsh >/dev/null && PS1_bak=$PS1&&PS1=$PS1'${cwdId}%d${cwdId}'\r
+echo $0|grep ash >/dev/null && PS1_bak=$PS1&&PS1=$PS1'\`echo ${cwdId}$PWD${cwdId}\`'\r
+echo $0|grep ksh >/dev/null && PS1_bak=$PS1&&PS1=$PS1'\`echo ${cwdId}$PWD${cwdId}\`'\r
+clear\r`
+
+      this.socket.send(ps1Cmd)
+    }
+  }
+
+  setCwd = (cwd) => {
+    this.props.setCwd(cwd, this.state.id)
+  }
+
+  onData = (d) => {
+    if (this.cmdAddon) {
+      this.cmdAddon.handleData(d)
+    }
+    if (!d.includes('\r')) {
+      delete this.userTypeExit
+    } else {
+      const data = this.getCmd().trim()
+      if (this.term.buffer.active.type !== 'alternate') {
+        this.timers.getCwd = setTimeout(this.getCwd, 200)
+      }
+      const exitCmds = [
+        'exit',
+        'logout'
+      ]
+      if (exitCmds.includes(data)) {
+        this.userTypeExit = true
+        this.timers.userTypeExit = setTimeout(() => {
+          delete this.userTypeExit
+        }, 2000)
+      }
+    }
+  }
+
+  loadRenderer = (term, config) => {
+    if (config.rendererType === rendererTypes.canvas) {
+      term.loadAddon(new CanvasAddon())
+    } else if (config.rendererType === rendererTypes.webGL) {
+      try {
+        term.loadAddon(new WebglAddon())
+      } catch (e) {
+        log.error('render with webgl failed, fallback to canvas')
+        log.error(e)
+        term.loadAddon(new CanvasAddon())
+      }
+    }
   }
 
   initTerminal = async () => {
-    const { id } = this.state
     // let {password, privateKey, host} = this.props.tab
     const { themeConfig, tab = {}, config = {} } = this.props
+    const tc = deepCopy(themeConfig)
+    tc.background = 'rgba(0,0,0,0)'
     const term = new Terminal({
+      allowProposedApi: true,
       scrollback: config.scrollback,
       rightClickSelectsWord: config.rightClickSelectsWord || false,
       fontFamily: tab.fontFamily || config.fontFamily,
-      theme: themeConfig,
+      theme: tc,
       allowTransparency: true,
       // lineHeight: 1.2,
+      wordSeparator: config.terminalWordSeparator,
+      cursorStyle: config.cursorStyle,
       cursorBlink: config.cursorBlink,
       fontSize: tab.fontSize || config.fontSize,
-      rendererType: config.rendererType
+      screenReaderMode: config.screenReaderMode
     })
+
+    // term.onLineFeed(this.onLineFeed)
+    // term.onTitleChange(this.onTitleChange)
+    term.parent = this
+    term.onSelectionChange(this.onSelection)
+    term.open(document.getElementById(this.getDomId()), true)
+    this.loadRenderer(term, config)
+    term.textarea.addEventListener('click', this.setActive)
+    // term.onKey(this.onKey)
+    // term.textarea.addEventListener('blur', this.onBlur)
+
+    // term.on('keydown', this.handleEvent)
     this.fitAddon = new FitAddon()
+    this.cmdAddon = new CommandTrackerAddon()
     this.searchAddon = new SearchAddon()
+    const ligtureAddon = new LigaturesAddon()
+    this.searchAddon.onDidChangeResults(this.onSearchResultsChange)
     const unicode11Addon = new Unicode11Addon()
     term.loadAddon(unicode11Addon)
+    term.loadAddon(ligtureAddon)
     // activate the new version
     term.unicode.activeVersion = '11'
     term.loadAddon(this.fitAddon)
     term.loadAddon(this.searchAddon)
-    term.open(document.getElementById(id), true)
-    term.textarea.addEventListener('focus', this.setActive)
-    term.textarea.addEventListener('blur', this.onBlur)
-    term.onTitleChange(this.onTitleChange)
-    term.onSelectionChange(this.onSelection)
-    // term.on('keydown', this.handleEvent)
+    term.loadAddon(this.cmdAddon)
+    term.onData(this.onData)
     this.term = term
-    // if (host && !password && !privateKey) {
-    //   return this.promote()
-    // }
+    term.attachCustomKeyEventHandler(this.handleKeyboardEvent.bind(this))
     await this.remoteInit(term)
   }
 
   setActive = () => {
-    this.props.setActive(this.props.id)
-    this.props.store.storeAssign({
-      activeTerminalId: this.props.id
+    const name = `activeTabId${this.props.batch}`
+    const tabId = this.props.tab.id
+    window.store.storeAssign({
+      activeTabId: tabId,
+      [name]: tabId
     })
   }
 
   runInitScript = () => {
-    const { type, title, loginScript, startDirectory } = this.props.tab
-    let cmd = ''
-    if (type === terminalSshConfigType) {
-      cmd = `ssh ${title.split(/\s/g)[0]}\r`
-    } else if (startDirectory && !loginScript) {
-      cmd = `cd ${startDirectory}\r`
-    } else if (!startDirectory && loginScript) {
-      cmd = loginScript + '\r'
-    } else if (startDirectory && loginScript) {
-      cmd = `cd ${startDirectory} && ${loginScript}\r`
+    window.store.triggerResize()
+    const {
+      startDirectory,
+      runScripts
+    } = this.props.tab
+    const startFolder = startDirectory || window.initFolder
+    if (startFolder) {
+      const cmd = `cd "${startFolder}"\r`
+      this.attachAddon._sendData(cmd)
     }
-    this.attachAddon._sendData(cmd)
+    if (runScripts && runScripts.length) {
+      this.delayedScripts = deepCopy(runScripts)
+      this.timers.timerDelay = setTimeout(this.runDelayedScripts, this.delayedScripts[0].delay || 0)
+    }
   }
 
-  count = 0
+  runDelayedScripts = () => {
+    const { delayedScripts } = this
+    if (delayedScripts && delayedScripts.length > 0) {
+      const obj = delayedScripts.shift()
+      if (obj.script) {
+        this.attachAddon._sendData(obj.script + '\r')
+      }
+      if (delayedScripts.length > 0) {
+        const nextDelay = delayedScripts[0].delay || 0
+        this.timers.timerDelay = setTimeout(this.runDelayedScripts, nextDelay)
+      }
+    }
+  }
 
   setStatus = status => {
-    const id = _.get(this.props, 'tab.id')
-    this.props.store.editTab(id, {
+    const id = this.props.tab?.id
+    this.props.editTab(id, {
       status
     })
-  }
-
-  watchNormalBufferTrigger = e => {
-    if (
-      keyControlPressed(e) &&
-      keyPressed(e, 'ArrowUp')
-    ) {
-      e.stopPropagation()
-      this.copySelectionToClipboard()
-    }
   }
 
   openNormalBuffer = () => {
@@ -792,23 +1005,26 @@ export default class Term extends Component {
     })
     const { cols, rows } = term
     const { config } = this.props
-    const { host, port, tokenElecterm } = config
-    const { tab = {}, sessionId, terminalIndex, id, logName } = this.props
+    const {
+      host,
+      port,
+      tokenElecterm,
+      keywords = [],
+      server = ''
+    } = config
+    const { sessionId, logName } = this.props
+    const tab = window.store.applyProfileToTabs(deepCopy(this.props.tab || {}))
     const {
       srcId, from = 'bookmarks',
-      type, loginScript,
-      loginScriptDelay = defaultLoginScriptDelay,
-      encode,
+      type,
       term: terminalType,
-      startDirectory
+      displayRaw,
+      id
     } = tab
     const { savePassword } = this.state
-    const isSshConfig = type === terminalSshConfigType
-    const termType = isSshConfig
-      ? typeMap.local
-      : type
+    const termType = type
     const extra = this.props.sessionOptions
-    let pid = await createTerm({
+    const opts = clone({
       cols,
       rows,
       term: terminalType || config.terminalType,
@@ -816,7 +1032,8 @@ export default class Term extends Component {
       ...tab,
       ...extra,
       logName,
-      ..._.pick(config, [
+      ...pick(config, [
+        'addTimeStampToTermLog',
         'keepaliveInterval',
         'keepaliveCountMax',
         'execWindows',
@@ -827,118 +1044,75 @@ export default class Term extends Component {
         'execLinuxArgs',
         'debug'
       ]),
+      keepaliveInterval: tab.keepaliveInterval === undefined ? config.keepaliveInterval : tab.keepaliveInterval,
       sessionId,
       tabId: id,
-      terminalIndex,
+      uid: id,
+      srcTabId: tab.id,
       termType,
       readyTimeout: config.sshReadyTimeout,
-      proxy: mergeProxy(config, tab),
-      type: tab.host && !isSshConfig
+      proxy: getProxy(tab, config),
+      type: tab.host
         ? typeMap.remote
         : typeMap.local
     })
+    let r = await createTerm(opts)
       .catch(err => {
         const text = err.message
-        if (text.includes(authFailMsg)) {
-          this.setState(() => ({ passType: 'password' }))
-          return 'fail'
-        } else if (text.includes(privateKeyMsg)) {
-          this.setState(() => ({ passType: 'passphrase' }))
-          return 'fail-private'
-        } else {
-          handleErr({ message: text })
-        }
+        handleErr({ message: text })
       })
-    pid = pid || ''
-    if (pid.includes('fail')) {
+    r = r || ''
+    if (r.includes('fail')) {
       return this.promote()
     }
     if (savePassword) {
-      this.props.store.editItem(srcId, extra, from)
+      window.store.editItem(srcId, extra, from)
     }
     this.setState({
       loading: false
     })
-    if (!pid) {
+    if (!r) {
       this.setStatus(statusMap.error)
       return
     }
     this.setStatus(statusMap.success)
-    this.props.setSessionState({
-      pid
-    })
-    term.pid = pid
-    this.pid = pid
-    this.setState({
-      pid
-    })
-    const wsUrl = `ws://${host}:${port}/terminals/${pid}?sessionId=${sessionId}&token=${tokenElecterm}`
+    term.pid = id
+    this.pid = id
+    const hs = server
+      ? server.replace(/https?:\/\//, '')
+      : `${host}:${port}`
+    const pre = server.startsWith('https') ? 'wss' : 'ws'
+    const wsUrl = `${pre}://${hs}/terminals/${id}?sessionId=${sessionId}&token=${tokenElecterm}`
     const socket = new WebSocket(wsUrl)
     socket.onclose = this.oncloseSocket
     socket.onerror = this.onerrorSocket
-    this.attachAddon = new AttachAddon(socket, undefined, encode)
-    term.loadAddon(this.attachAddon)
+    this.socket = socket
+    this.term = term
     socket.onopen = () => {
-      const old = socket.send
-      socket.send = (...args) => {
-        this.listenTimeout()
-        return old.apply(socket, args)
-      }
-      socket.addEventListener('message', this.onSocketData)
+      this.initAttachAddon()
+      this.runInitScript()
       term._initialized = true
     }
-    this.socket = socket
     // term.onRrefresh(this.onRefresh)
     term.onResize(this.onResizeTerminal)
-    if (_.pick(term, 'buffer._onBufferChange._listeners')) {
+    if (pick(term, 'buffer._onBufferChange._listeners')) {
       term.buffer._onBufferChange._listeners.push(this.onBufferChange)
     }
-    const cid = _.get(this.props, 'currentTabId')
-    const tid = _.get(this.props, 'tab.id')
-    if (cid === tid && this.props.tab.status === statusMap.success) {
-      term.loadAddon(new WebLinksAddon(this.webLinkHandler))
-      term.focus()
-      this.zmodemAddon = new AddonZmodem()
-      this.fitAddon.fit()
-      term.loadAddon(this.zmodemAddon)
-      term.zmodemAttach(this.socket, {
-        noTerminalWriteOutsideSession: true
-      }, this)
-    }
-    term.attachCustomKeyEventHandler(this.handleEvent)
-    // this.decoder = new TextDecoder(encode)
-    // const oldWrite = term.write
-    // const th = this
-    // term.write = function (data) {
-    //   let str = ''
-    //   if (typeof data === 'object') {
-    //     if (data instanceof ArrayBuffer) {
-    //       str = th.decoder.decode(data)
-    //       oldWrite.call(term, str)
-    //     } else {
-    //       const fileReader = new FileReader()
-    //       fileReader.addEventListener('load', () => {
-    //         str = th.decoder.decode(fileReader.result)
-    //         console.log(str, '--ff-')
-    //         oldWrite.call(term, str)
-    //       })
-    //       fileReader.readAsArrayBuffer(new window.Blob([data]))
-    //     }
-    //   } else if (typeof data === 'string') {
-    //     oldWrite.call(term, data)
-    //   } else {
-    //     throw Error(`Cannot handle ${typeof data} websocket message.`)
-    //   }
-    // }
-    this.term = term
-    if (startDirectory || loginScript || isSshConfig) {
-      this.timers.timer1 = setTimeout(this.runInitScript, loginScriptDelay)
-    }
+    term.loadAddon(new WebLinksAddon(this.webLinkHandler))
+    term.focus()
+    this.zmodemAddon = new AddonZmodem()
+    this.fitAddon.fit()
+    term.loadAddon(this.zmodemAddon)
+    term.zmodemAttach(this)
+    term.displayRaw = displayRaw
+    term.loadAddon(
+      new KeywordHighlighterAddon(keywords)
+    )
   }
 
-  onResize = _.debounce(() => {
-    const cid = _.get(this.props, 'currentTabId')
-    const tid = _.get(this.props, 'tab.id')
+  onResize = throttle(() => {
+    const cid = this.props.currentBatchTabId
+    const tid = this.props.tab?.id
     if (
       this.props.tab.status === statusMap.success &&
       cid === tid &&
@@ -954,28 +1128,60 @@ export default class Term extends Component {
 
   onerrorSocket = err => {
     this.setStatus(statusMap.error)
-    log.warn('onerrorSocket', err)
+    log.error('onerrorSocket', err)
   }
 
   oncloseSocket = () => {
-    if (this.onClose) {
+    if (this.onClose || this.props.tab.enableSsh === false) {
       return
     }
-    this.setStatus(statusMap.error)
-    log.debug('socket closed, pid:', this.pid)
+    this.setStatus(
+      statusMap.error
+    )
+    if (!this.isActiveTerminal() || !window.focused) {
+      return false
+    }
+    if (this.userTypeExit) {
+      return this.props.delTab(this.props.tab.id)
+    }
+    const key = `open${Date.now()}`
+    function closeMsg () {
+      notification.destroy(key)
+    }
+    this.socketCloseWarning = notification.warning({
+      key,
+      message: e('socketCloseTip'),
+      duration: 30,
+      description: (
+        <div className='pd2y'>
+          <Button
+            className='mg1r'
+            type='primary'
+            onClick={() => {
+              closeMsg()
+              this.props.delTab(this.props.tab.id)
+            }}
+          >
+            {e('close')}
+          </Button>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => {
+              closeMsg()
+              this.props.reloadTab(
+                this.props.tab
+              )
+            }}
+          >
+            {e('reload')}
+          </Button>
+        </div>
+      )
+    })
   }
 
-  batchInput = (cmd, toAll) => {
-    if (toAll) {
-      window.postMessage({
-        type: 'batch-input',
-        target: 'all',
-        cmd,
-        toAll
-      }, '*')
-    } else {
-      this.attachAddon._sendData(cmd + '\r')
-    }
+  batchInput = (cmd) => {
+    this.attachAddon._sendData(cmd + '\r')
   }
 
   onResizeTerminal = size => {
@@ -983,268 +1189,55 @@ export default class Term extends Component {
     resizeTerm(this.pid, this.props.sessionId, cols, rows)
   }
 
-  promote = () => {
-    this.setState({
-      promoteModalVisible: true,
-      tempPassword: ''
-    })
-  }
-
-  onCancel = () => {
+  handleCancel = () => {
     const { id } = this.props.tab
-    this.props.store.delTab({ id })
-  }
-
-  onToggleSavePass = () => {
-    this.setState({
-      savePassword: !this.state.savePassword
-    })
-  }
-
-  renderPasswordForm = () => {
-    const { tempPassword, savePassword, promoteModalVisible } = this.state
-    const { type } = this.props.tab
-    return (
-      <div>
-        <Input
-          value={tempPassword}
-          type='password'
-          autofocustrigger={promoteModalVisible ? 1 : 2}
-          selectall='yes'
-          onChange={this.onChangePass}
-          onPressEnter={this.onClickConfirmPass}
-        />
-        {
-          type !== terminalSshConfigType
-            ? (
-              <div className='pd1t'>
-                <Checkbox
-                  checked={savePassword}
-                  onChange={this.onToggleSavePass}
-                >{f('save')}</Checkbox>
-              </div>
-            )
-            : null
-        }
-      </div>
-    )
-  }
-
-  onChangePass = e => {
-    this.setState({
-      tempPassword: e.target.value
-    })
-  }
-
-  onClickConfirmPass = () => {
-    const {
-      tempPassword,
-      passType
-    } = this.state
-    this.props.setSessionState(old => {
-      const sessionOptions = deepCopy(old.sessionOptions) || {}
-      sessionOptions[passType] = tempPassword
-      return { sessionOptions }
-    })
-    this.setState({
-      promoteModalVisible: false
-    }, this.remoteInit)
+    this.props.delTab(id)
   }
 
   handleShowInfo = () => {
-    const { id, sessionId, logName } = this.props
-    const { pid } = this.state
+    const { sessionId, logName, tab } = this.props
     const infoProps = {
       logName,
-      id,
-      pid,
+      id: tab.id,
+      pid: tab.id,
       sessionId,
       isRemote: this.isRemote(),
       isActive: this.isActiveTerminal()
     }
-    this.props.handleShowInfo(infoProps)
+    Object.assign(window.store.terminalInfoProps, infoProps)
   }
 
-  getPwd = async () => {
-    const { sessionId, config } = this.props
-    const { pid } = this.state
-    const prps = {
-      host: config.host,
-      port: config.port,
-      pid,
-      sessionId
-    }
-    const result = await runCmds(prps, ['pwd'])
-      .catch(this.props.store.onError)
-    return result ? result[0].trim() : ''
-  }
-
-  renderPromoteModal = () => {
-    if (!this.isActiveTerminal()) {
-      return null
-    }
-    const {
-      passType = 'password'
-    } = this.state
-    const props = {
-      title: f(passType) + '?',
-      content: this.renderPasswordForm(),
-      onCancel: this.onCancel,
-      visible: this.state.promoteModalVisible,
-      footer: this.renderModalFooter(),
-      cancelText: c('cancel')
-    }
-    return (
-      <Modal
-        {...props}
-      >
-        {this.renderPasswordForm()}
-      </Modal>
-    )
-  }
-
-  renderModalFooter = () => {
-    const disabled = !this.state.tempPassword
-    return (
-      <div className='alignright pd1'>
-        <Button
-          type='primary'
-          icon={<CheckCircleOutlined />}
-          disabled={disabled}
-          onClick={this.onClickConfirmPass}
-          className='mg1r'
-        >
-          {c('ok')}
-        </Button>
-        <Button
-          type='ghost'
-          className='mg1r'
-          onClick={this.onCancel}
-        >
-          {c('cancel')}
-        </Button>
-      </div>
-    )
-  }
-
-  renderSearchBox = () => {
-    if (!this.isActiveTerminal()) {
-      return null
-    }
-    const { searchInput, searchVisible } = this.state
-    if (!searchVisible) {
-      return null
-    }
-    return (
-      <div className='term-search-box'>
-        <Input
-          value={searchInput}
-          onChange={this.onChangeSearch}
-          onPressEnter={this.searchNext}
-          addonAfter={
-            <span>
-              <LeftOutlined className='pointer mg1r' title={e('prevMatch')} onClick={this.searchPrev} />
-              <RightOutlined className='pointer mg1r' title={e('nextMatch')} onClick={this.searchNext} />
-              <CloseOutlined className='pointer' title={m('close')} onClick={this.searchClose} />
-            </span>
-          }
-        />
-      </div>
-    )
-  }
+  // getPwd = async () => {
+  //   const { sessionId, config } = this.props
+  //   const { pid } = this.state
+  //   const prps = {
+  //     host: config.host,
+  //     port: config.port,
+  //     pid,
+  //     sessionId
+  //   }
+  //   const result = await runCmds(prps, ['pwd'])
+  //     .catch(window.store.onError)
+  //   return result ? result[0].trim() : ''
+  // }
 
   switchEncoding = encode => {
-    this.decode = new TextDecoder(encode)
-    this.attachAddon.decoder = this.decode
-  }
-
-  renderEncodingInfo () {
-    return (
-      <div className='terminal-footer-unit terminal-footer-info'>
-        <div className='fleft relative'>
-          <Select
-            style={{ minWidth: 100 }}
-            placeholder={f('encode')}
-            defaultValue={this.props.tab.encode}
-            onSelect={this.switchEncoding}
-            size='small'
-          >
-            {
-              encodes.map(k => {
-                return (
-                  <Select.Option key={k} value={k}>
-                    {k}
-                  </Select.Option>
-                )
-              })
-            }
-          </Select>
-        </div>
-      </div>
-    )
-  }
-
-  renderInfoIcon () {
-    const { loading } = this.state
-    const infoProps = {
-      showInfoPanel: this.handleShowInfo
-    }
-    return loading || !this.isActiveTerminal()
-      ? null
-      : (
-        <div className='terminal-footer-unit terminal-footer-info'>
-          <TerminalInfoIcon
-            {...infoProps}
-          />
-        </div>
-      )
-  }
-
-  renderQuickCommands () {
-    return (
-      <div className='terminal-footer-unit terminal-footer-qm'>
-        <Qm
-          store={this.props.store}
-        />
-      </div>
-    )
-  }
-
-  renderBatchInputs () {
-    return (
-      <div className='terminal-footer-unit terminal-footer-center'>
-        <BatchInput
-          store={this.props.store}
-          input={this.batchInput}
-        />
-      </div>
-    )
-  }
-
-  renderFooter () {
-    if (!this.isActiveTerminal()) {
-      return null
-    }
-    return (
-      <div className='terminal-footer'>
-        <div className='terminal-footer-flex'>
-          {this.renderQuickCommands()}
-          {this.renderBatchInputs()}
-          {this.renderEncodingInfo()}
-          {this.renderInfoIcon()}
-        </div>
-      </div>
-    )
+    this.encode = encode
+    this.attachAddon.decoder = new TextDecoder(encode)
   }
 
   render () {
-    const { id, loading, zmodemTransfer } = this.state
-    const { height, width, left, top, position, id: pid, activeSplitId } = this.props
-    const cls = classnames('term-wrap', {
-      'not-first-term': !!position
-    }, 'tw-' + pid, {
-      'terminal-not-active': activeSplitId !== pid
-    })
+    const { loading } = this.state
+    const { height, width, left, top } = this.props
+    const { id } = this.props.tab
+    const isActive = this.isActiveTerminal()
+    const cls = classnames(
+      'term-wrap',
+      'tw-' + id,
+      {
+        'terminal-not-active': !isActive
+      }
+    )
     const prps1 = {
       className: cls,
       style: {
@@ -1252,7 +1245,7 @@ export default class Term extends Component {
         width,
         left,
         top,
-        zIndex: position / 10
+        zIndex: 10
       },
       onDrop: this.onDrop
     }
@@ -1262,50 +1255,31 @@ export default class Term extends Component {
     //   id: `${id}-file-sel`,
     //   className: 'hide'
     // }
-    const prps2 = {
-      className: 'absolute term-wrap-1',
+    const prps3 = {
+      id: this.getDomId(),
+      className: 'absolute term-wrap-2',
       style: {
         left: '10px',
         top: '10px',
         right: 0,
-        bottom: '70px'
-      }
-    }
-    const prps3 = {
-      id,
-      className: 'absolute term-wrap-2',
-      style: {
-        left: 0,
-        top: 0,
-        height: '100%',
-        width: '100%'
+        bottom: 0
       }
     }
     return (
       <div
         {...prps1}
       >
-        {this.renderPromoteModal()}
         <div
-          {...prps2}
-        >
-          {this.renderSearchBox()}
-          <div
-            {...prps3}
-          />
-          <NormalBuffer
-            lines={this.state.lines}
-            close={this.closeNormalBuffer}
-          />
-        </div>
-        {this.renderFooter()}
-        <ZmodemTransfer
-          zmodemTransfer={zmodemTransfer}
-          cancelZmodem={this.cancelZmodem}
-          beforeZmodemUpload={this.beforeZmodemUpload}
+          {...prps3}
+        />
+        <NormalBuffer
+          lines={this.state.lines}
+          close={this.closeNormalBuffer}
         />
         <Spin className='loading-wrapper' spinning={loading} />
       </div>
     )
   }
 }
+
+export default shortcutDescExtend(shortcutExtend(Term))

@@ -1,21 +1,22 @@
 const express = require('express')
+const globalState = require('./global-state')
 const app = express()
-const cors = require('cors')
-const strip = require('@electerm/strip-ansi').default
-const log = require('../utils/log')
-// const logs = {}
-const bodyParser = require('body-parser')
+const log = require('../common/log')
 const { verifyWs, initWs } = require('./dispatch-center')
 const {
   terminals
 } = require('./remote-common')
-app.use(cors())
+const {
+  isWin,
+  isDev
+} = require('../common/runtime-constants')
+const initFileServer = require('../lib/file-server')
 
 // parse application/x-www-form-urlencoded
-app.use(bodyParser.urlencoded({ extended: false }))
+app.use(express.urlencoded({ extended: false }))
 
 // parse application/json
-app.use(bodyParser.json())
+app.use(express.json())
 
 require('express-ws')(app, undefined, {
   wsOptions: {
@@ -50,11 +51,10 @@ app.ws('/terminals/:pid', function (ws, req) {
 
   term.on('data', function (data) {
     try {
-      if (term.sessionLogger) {
-        term.sessionLogger.write(strip(data.toString()))
-      }
+      term.writeLog(data)
       ws.send(Buffer.from(data))
     } catch (ex) {
+      console.log(ex)
       // The WebSocket is not open, ignore
     }
   })
@@ -67,6 +67,9 @@ app.ws('/terminals/:pid', function (ws, req) {
   }
 
   term.on('close', onClose)
+  if (term.isLocal && isWin) {
+    term.on('exit', onClose)
+  }
 
   ws.on('message', function (msg) {
     try {
@@ -81,10 +84,41 @@ app.ws('/terminals/:pid', function (ws, req) {
   ws.on('close', onClose)
 })
 
+app.ws('/rdp/:pid', function (ws, req) {
+  const { sessionId, width, height } = req.query
+  verifyWs(req)
+  const term = terminals(req.params.pid, sessionId)
+  term.ws = ws
+  term.start(width, height)
+  const { pid } = term
+  log.debug('ws: connected to rdp session ->', pid)
+  ws.on('error', log.error)
+})
+
+app.ws('/vnc/:pid', function (ws, req) {
+  const { sessionId, ...rest } = req.query
+  verifyWs(req)
+  const term = terminals(req.params.pid, sessionId)
+  term.ws = ws
+  term.start(rest)
+  const { pid } = term
+  log.debug('ws: connected to vnc session ->', pid)
+  ws.on('error', log.error)
+})
+
 app.get('/run', function (req, res) {
   res.send('ok')
 })
-
+app.post('/auth', function (req, res) {
+  const { token } = req.body
+  if (token === process.env.requireAuth) {
+    globalState.authed = true
+  }
+  res.send('ok')
+})
+if (!isDev) {
+  initFileServer(app)
+}
 initWs(app)
 
 const runServer = function () {
@@ -97,3 +131,14 @@ const runServer = function () {
 
 // start
 runServer()
+
+process.on('uncaughtException', (err) => {
+  log.error('uncaughtException', err)
+})
+process.on('unhandledRejection', (err) => {
+  log.error('unhandledRejection', err)
+})
+
+process.on('SIGTERM', () => {
+  process.exit(0)
+})

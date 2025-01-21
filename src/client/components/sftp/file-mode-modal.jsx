@@ -3,27 +3,47 @@
  */
 
 import React from 'react'
-import {
-  FolderOutlined,
-  FileOutlined
-} from '@ant-design/icons'
 import { Modal, Button } from 'antd'
 import resolve from '../../common/resolve'
-import time from '../../../app/common/time'
-import _ from 'lodash'
+import time from '../../common/time'
+import { update } from 'lodash-es'
 import { mode2permission, permission2mode } from '../../common/mode2permission'
+import { commonActions } from '../../common/constants'
 import renderPermission from './permission-render'
-import copy from 'json-deep-copy'
+import postMessage from '../../common/post-msg'
+import FileIcon from './file-icon'
 
-const { prefix } = window
-const e = prefix('sftp')
+const e = window.translate
 const formatTime = time
 
 export default class FileMode extends React.PureComponent {
-  constructor (props) {
-    super(props)
-    this.state = {
-      file: copy(props.file)
+  state = {
+    data: {},
+    file: {}
+  }
+
+  componentDidMount () {
+    window.addEventListener('message', this.onEvent)
+  }
+
+  setStateProxy = (state, cb) => {
+    if (state && typeof state.file !== 'undefined') {
+      window.store.showFileModal = !!state.file.id
+    }
+    return this.setState(state, cb)
+  }
+
+  onEvent = (e) => {
+    const {
+      action,
+      data,
+      file
+    } = e.data || {}
+    if (action === commonActions.showFileModeModal) {
+      this.setStateProxy({
+        data,
+        file
+      })
     }
   }
 
@@ -41,15 +61,15 @@ export default class FileMode extends React.PureComponent {
   onChangePermission = (name, permName) => {
     const { file } = this.state
     const perms = mode2permission(file.mode)
-    const i = _.findIndex(perms, p => p.name === name)
-    _.update(
+    const i = perms.findIndex(p => p.name === name)
+    update(
       perms,
       `[${i}].permission.${permName}`,
       b => !b
     )
     const permission = permission2mode(perms)
     const mode = Number('0o' + '10' + permission)
-    this.setState({
+    this.setStateProxy({
       file: {
         ...file,
         permission,
@@ -58,17 +78,29 @@ export default class FileMode extends React.PureComponent {
     })
   }
 
-  onSubmit = () => {
-    this.props.changeFileMode(
-      this.state.file
-    )
+  onClose = () => {
+    postMessage({
+      action: commonActions.submitFileModeClose
+    })
+    this.setStateProxy({
+      file: {},
+      data: {}
+    })
+  }
+
+  handleSubmit = () => {
+    postMessage({
+      action: commonActions.submitFileModeEdit,
+      file: this.state.file
+    })
+    this.onClose()
   }
 
   renderFooter () {
     return (
       <Button
         type='primary'
-        onClick={this.onSubmit}
+        onClick={this.handleSubmit}
       >
         {e('submit')}
       </Button>
@@ -79,10 +111,9 @@ export default class FileMode extends React.PureComponent {
     const {
       visible,
       tab,
-      onClose,
       uidTree,
       gidTree
-    } = this.props
+    } = this.state.data
     if (!visible) {
       return null
     }
@@ -106,15 +137,12 @@ export default class FileMode extends React.PureComponent {
       username
     } = tab
     const iconType = isDirectory ? 'folder' : 'file'
-    const Icon = isDirectory
-      ? FolderOutlined
-      : FileOutlined
     const ps = {
-      visible,
+      open: visible,
       width: 500,
       title: `${e('edit')} ` + e(iconType) + ` ${e('permission')}`,
       footer: this.renderFooter(),
-      onCancel: onClose
+      onCancel: this.onClose
     }
     const fp = resolve(path, name)
     const ffp = type === 'local'
@@ -129,7 +157,11 @@ export default class FileMode extends React.PureComponent {
         {...ps}
       >
         <div className='file-props-wrap relative'>
-          <Icon className='file-icon' />
+          <FileIcon
+            className='file-icon'
+            file={file}
+            height={50}
+          />
           <div className='file-props'>
             <p className='bold'>{e(iconType)} {e('name')}:</p>
             <p className='pd1b'>

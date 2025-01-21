@@ -2,13 +2,28 @@
  * output default new terminal data obj
  */
 
-import { nanoid as generate } from 'nanoid/non-secure'
+import uid from './id-with-stamp'
+import {
+  paneMap
+} from './constants'
 
-const { prefix } = window
-const e = prefix('control')
+const e = window.translate
+window.et.tabCount = 0
 
-export default (len) => ({
-  id: generate(),
-  status: 'processing',
-  title: e('newTerminal') + (len ? `(${len})` : '')
-})
+export function updateCount (tab) {
+  window.et.tabCount++
+  return window.et.tabCount
+}
+
+export default (removeTitle) => {
+  const res = {
+    id: uid(),
+    status: 'processing',
+    pane: paneMap.terminal,
+    title: e('newTerminal')
+  }
+  if (removeTitle) {
+    delete res.title
+  }
+  return res
+}

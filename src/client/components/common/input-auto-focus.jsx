@@ -1,62 +1,35 @@
-/**
- * input with auto focus
- */
+import { useEffect, useRef } from 'react'
+import {
+  Input
+} from 'antd'
 
-import { Input } from 'antd'
-import React from 'react'
-import ReactDOM from 'react-dom'
-import _ from 'lodash'
+export default function InputAutoFocus (props) {
+  const { type, selectall = false, ...rest } = props
+  const inputRef = useRef(null)
 
-export default class InputAutoFocus extends React.PureComponent {
-  componentDidMount () {
-    this.timer = setTimeout(this.doFocus, 50)
-  }
-
-  componentDidUpdate (prevProps) {
-    if (!prevProps.selectall) {
-      return
-    }
-    if (prevProps.autofocustrigger !== this.props.autofocustrigger) {
-      this.timer = setTimeout(this.doFocus, 50)
-    }
-  }
-
-  componentWillUnmount () {
-    clearTimeout(this.timer)
-  }
-
-  doFocus = () => {
-    const dom = this.getDom()
-    if (dom && dom.focus) {
-      const { value, selectall = false } = this.props
-      const index = _.findLastIndex(value, v => v === '.')
-      const hasExt = index > 0
-      if (value && !selectall && hasExt) {
-        dom.focus()
-        dom.setSelectionRange(0, index)
+  useEffect(() => {
+    if (inputRef.current) {
+      const { value } = props
+      if (value && selectall) {
+        inputRef.current.setSelectionRange(0, value.length)
       } else {
-        dom.select()
+        inputRef.current.focus()
       }
     }
+  }, [props.value, props.selectall]) // Focus when these props change
+  let InputComponent
+  switch (type) {
+    case 'password':
+      InputComponent = Input.Password
+      break
+    default:
+      InputComponent = Input
   }
+  return (
+    <InputComponent
+      ref={inputRef}
+      {...rest}
+    />
 
-  getDom () {
-    const root = ReactDOM.findDOMNode(this)
-    const dom = root.tagName === 'INPUT'
-      ? root
-      : root.querySelector('input')
-    return dom
-  }
-
-  render () {
-    const { type, ...rest } = this.props
-    const Dom = type === 'password'
-      ? Input.Password
-      : Input
-    return (
-      <Dom
-        {...rest}
-      />
-    )
-  }
+  )
 }

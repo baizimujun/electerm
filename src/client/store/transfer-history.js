@@ -2,29 +2,16 @@
  * transfer history related functions
  */
 
-import {
-  maxTransferHistory
-} from '../common/constants'
-
-export default store => {
-  store.openTransferHistory = () => {
-    store.transferHistoryModalVisible = true
+export default Store => {
+  Store.prototype.clearTransferHistory = function () {
+    window.store.transferHistory = []
   }
 
-  store.closeTransferHistory = () => {
-    store.transferHistoryModalVisible = false
+  Store.prototype.getTransferHistory = function () {
+    return window.store.transferHistory
   }
 
-  store.clearTransferHistory = () => {
-    store.storeAssign({
-      transferHistory: [],
-      transferHistoryModalVisible: false
-    })
-  }
-
-  store.addTransferHistory = (item) => {
-    const { transferHistory } = store
-    transferHistory.unshift(item)
-    store.transferHistory = transferHistory.slice(0, maxTransferHistory)
+  Store.prototype.addTransferHistory = function (item) {
+    window.store.transferHistory.unshift(item)
   }
 }
