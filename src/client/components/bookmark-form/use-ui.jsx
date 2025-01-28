@@ -10,24 +10,22 @@ import {
   Input,
   InputNumber,
   AutoComplete,
-  Form
+  Form,
+  Switch
 } from 'antd'
 import { formItemLayout } from '../../common/form-layout'
-import defaultSettings from '../../../app/common/default-setting'
+import defaultSettings from '../../common/default-setting'
 import mapper from '../../common/auto-complete-data-mapper'
-import { defaultEnvLang } from '../../common/constants'
+import { defaultEnvLang, terminalTypes } from '../../common/constants'
 
 const FormItem = Form.Item
-const { prefix } = window
-const e = prefix('form')
-const s = prefix('setting')
+const e = window.translate
 
 export default function useBookmarkFormUI (props) {
   const {
     fontFamily: defaultFontFamily,
     fontSize: defaultFontSize
   } = defaultSettings
-  const { terminalTypes } = props.store.config
   return [
     <FormItem
       {...formItemLayout}
@@ -56,7 +54,16 @@ export default function useBookmarkFormUI (props) {
     </FormItem>,
     <FormItem
       {...formItemLayout}
-      label={s('fontFamily')}
+      label={e('displayRaw')}
+      name='displayRaw'
+      key='displayRaw'
+      valuePropName='checked'
+    >
+      <Switch />
+    </FormItem>,
+    <FormItem
+      {...formItemLayout}
+      label={e('fontFamily')}
       key='fontFamily'
       name='fontFamily'
       rules={[{
@@ -68,7 +75,7 @@ export default function useBookmarkFormUI (props) {
     <FormItem
       key='fontSize'
       {...formItemLayout}
-      label={s('fontSize')}
+      label={e('fontSize')}
       name='fontSize'
     >
       <InputNumber
@@ -76,6 +83,18 @@ export default function useBookmarkFormUI (props) {
         max={65535}
         step={1}
         placeholder={defaultFontSize}
+      />
+    </FormItem>,
+    <FormItem
+      key='keepaliveInterval'
+      {...formItemLayout}
+      label={e('keepaliveIntervalDesc')}
+      name='keepaliveInterval'
+    >
+      <InputNumber
+        min={0}
+        max={20000000}
+        step={1000}
       />
     </FormItem>
   ]

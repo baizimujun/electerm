@@ -5,7 +5,7 @@
 
 const { fork } = require('child_process')
 const { resolve } = require('path')
-const log = require('../utils/log')
+const log = require('../common/log')
 
 module.exports = (config, env, sysLocale) => {
   // start server
@@ -15,7 +15,9 @@ module.exports = (config, env, sysLocale) => {
         LANG: `${sysLocale.replace(/-/, '_')}.UTF-8`,
         electermPort: config.port,
         electermHost: config.host,
-        tokenElecterm: config.tokenElecterm
+        requireAuth: config.requireAuth || '',
+        tokenElecterm: config.tokenElecterm,
+        sshKeysPath: env.sshKeysPath
       },
       env
     ),

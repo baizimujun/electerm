@@ -1,32 +1,37 @@
 @require '../../css/includes/theme-default'
 .tabs
   position relative
-  height 56px
+  height 36px
   overflow hidden
   background main-dark
-.app-drag
-  -webkit-app-region drag
-  position absolute
-  left 0
-  top 0
-  height 15px
-  right 0
-  z-index 1
+  z-index 12
+  ::-webkit-scrollbar
+    width 0
+    display none
+.not-system-ui.is-mac .layout-item.v1 .tabs-inner
+  margin-left 42px
+.not-system-ui.is-mac.not-webapp .layout-item.v1
+  .tabs-inner
+    margin-left 72px
+.not-system-ui.is-mac.not-webapp.pinned .layout-item.v1
+  .tabs-inner
+    margin-left 0
+.not-system-ui.not-mac.not-webapp
+  .tabs-extra
+    right 96px
 .tabs-inner
   position relative
   z-index 2
-  padding 0 5px
-  margin-top 10px
+  padding 0
+  margin-top 0
   display inline-block
-  height 63px
+  height 36px
   overflow-x scroll
   overflow-y hidden
-  margin-left 42px
-  -webkit-app-region drag
+
 .tabs-wrapper
   z-index 3
 .tab
-  -webkit-app-region no-drag
   display inline-block
   vertical-align middle
   cursor pointer
@@ -34,17 +39,19 @@
   min-width 100px
   max-width 200px
   line-height 36px
-  margin 5px 3px 5px 0
-  border-radius 3px
-  background main
+  margin 0 1px 0 0
+  border-radius 3px 3px 0 0
+  background main-dark
   text-align center
   color text-dark
+  &.tab-last
+    margin-right 5px
   .tab-reload
   .tab-close
     display none
   &.active
     color text
-    background main-light
+    background main
   &:hover
     .tab-close
       display block
@@ -125,35 +132,33 @@
 .tabs-add-btn
   display inline-block
   vertical-align middle
-  margin 0 3px
-  -webkit-app-region no-drag
+  margin 0 3px 0 3px
   color text
+  &.empty
+    font-size 20px
+    margin-left 20px
+    margin-top 10px
   &:hover
     color text-light
 .tabs-extra
   position absolute
-  height 20px
-  top 34px
+  height 40px
+  top 0
   right 0
-  line-height 20px
+  line-height 40px
   z-index 20
-  -webkit-app-region no-drag
-  // .ant-btn
-  //   background #333
-  //   color #aaa
-  //   border-color: #333
-  //   &:hover
-  //     color #ccc
+
   .tabs-dd-icon
     color text
     font-size 12px
+  .tabs-add-btn
+    margin-top 0
 
 .window-controls
   position absolute
   right 0
-  -webkit-app-region no-drag
   top 0
-  z-index 200
+  z-index 900
   border-radius 0 0 3px 3px
   padding 0
   background main-light
@@ -162,7 +167,6 @@
   display inline-block
   padding 5px 10px
   color text
-  -webkit-app-region no-drag
   &:hover
     color primary
     cursor pointer
@@ -206,9 +210,31 @@
 
 .system-ui
   .window-controls
-  .app-drag
     display none
-  .tabs
-    height 45px
-  .tabs-inner
-    margin-top 0
+.tab-title-tag
+  margin-right 5px
+  font-size 14px
+.no-sessions
+  background main-dark
+  text-align center
+  padding 50px 0
+  position absolute
+  top 36px
+  left 0
+  right 0
+  bottom 0
+  z-index 11
+.tab-count
+  border-radius 10px 2px 2px 10px
+  padding 0 4px
+  height 20px
+  line-height 21px
+.no-session-history
+  position absolute
+  top 280px
+  bottom 80px
+  left 0
+  right 0
+  .sidebar-panel-history .pd2x
+    width 400px
+    margin 0 auto

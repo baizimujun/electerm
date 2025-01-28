@@ -3,33 +3,39 @@
  */
 
 import {
-  settingMap
+  openedSidebarKey,
+  sidebarPinnedKey
 } from '../common/constants'
+import * as ls from '../common/safe-local-storage'
 
-export default store => {
-  Object.assign(store, {
-    expandBookmarks () {
-      store.storeAssign({
-        openedCategoryIds: store.bookmarkGroups.map(g => g.id)
-      })
-    },
+export default Store => {
+  Store.prototype.expandBookmarks = function () {
+    const { store } = window
+    window.store.expandedKeys = store.getBookmarkGroupsTotal().map(g => g.id)
+  }
 
-    collapseBookmarks () {
-      store.storeAssign({
-        openedCategoryIds: []
-      })
-    },
+  Store.prototype.collapseBookmarks = function () {
+    const { store } = window
+    store.expandedKeys = []
+  }
 
-    pin (pinned) {
-      store.pinned = !store.pinned
-    },
+  Store.prototype.handlePin = function (pinned) {
+    const { store } = window
+    const current = !store.pinned
+    ls.setItem(sidebarPinnedKey, current + '')
+    store.pinned = current
+  }
 
-    onClickBookmark () {
-      store.onNewSsh()
-    },
+  Store.prototype.onClickBookmark = function () {
+    window.store.onNewSsh()
+  }
 
-    onClickHistory () {
-      store.onChangeTab(settingMap.history)
-    }
-  })
+  Store.prototype.handleSidebarPanelTab = function (tab) {
+    window.store.sidebarPanelTab = tab
+  }
+
+  Store.prototype.setOpenedSideBar = function (v) {
+    ls.setItem(openedSidebarKey, v)
+    window.store.openedSideBar = v
+  }
 }

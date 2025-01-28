@@ -4,11 +4,11 @@
 
 const { app } = require('electron')
 const home = app.getPath('home')
-const sshConfig = require('ssh-config')
 const { resolve } = require('path')
-const log = require('../utils/log')
+const log = require('../common/log')
 
 function loadSshConfig () {
+  const sshConfig = require('ssh-config')
   const defaultPort = 22
   let config = []
   try {
@@ -34,7 +34,7 @@ function loadSshConfig () {
     }).filter(d => d)
   } catch (e) {
     log.debug('error parsing $HOME/.ssh/config')
-    log.debug('maybe no $HOME/.ssh/config, but it is ok')
+    log.debug('maybe no $HOME/.ssh/config, it is ok')
   }
   return config
 }

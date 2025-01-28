@@ -3,10 +3,10 @@
  */
 
 import fetch from './fetch-from-server'
-import _ from 'lodash'
 import {
-  baseUpdateCheckUrls
+  baseUpdateCheckUrls, packInfo
 } from './constants'
+import dayjs from 'dayjs'
 
 async function fetchData (url, options) {
   const data = {
@@ -22,8 +22,9 @@ async function fetchData (url, options) {
 }
 
 function getInfo (url) {
-  const n = +new Date()
-  return fetchData(url + '?_=' + n, {
+  const n = Date.now()
+  const tail = url.includes('?') ? '' : '?_=' + n
+  return fetchData(url + tail, {
     action: 'get-update-info',
     headers: {
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36'
@@ -35,11 +36,30 @@ function getInfo (url) {
     })
 }
 
-export async function getLatestReleaseVersion () {
-  let url = `${baseUpdateCheckUrls[0]}/version.html`
+export async function getLatestReleaseVersion (n) {
+  let q = ''
+  if (n) {
+    const { store } = window
+    const info = {
+      load_time: store.loadTime,
+      bookmark_count: store.bookmarks.length,
+      lang: store.config.language,
+      sync_with_github: !!store.config.syncSetting?.githubGistId,
+      sync_with_gitee: !!store.config.syncSetting?.giteeGistId,
+      version: packInfo.version,
+      installSrc: store.installSrc,
+      n: Date.now()
+    }
+    q = Object.keys(info).reduce((p, k, i) => {
+      const pre = i ? '&' : '?'
+      return p + pre + k + '=' + encodeURIComponent(info[k])
+    }, '')
+  }
+
+  let url = `${baseUpdateCheckUrls[0]}/version.html${q}`
   let tagName = await getInfo(url)
   if (!tagName) {
-    url = `${baseUpdateCheckUrls[1]}/version.html`
+    url = `${baseUpdateCheckUrls[1]}/version.html${q}`
     tagName = await getInfo(url)
   }
   if (tagName) {
@@ -52,9 +72,14 @@ export async function getLatestReleaseVersion () {
 export async function getLatestReleaseInfo () {
   let url = `${baseUpdateCheckUrls[0]}/data/electerm-github-release.json`
   let res = await getInfo(url)
-  if (!_.get(res, 'release.body')) {
+  if (!res?.release?.body) {
     url = `${baseUpdateCheckUrls[1]}/data/electerm-github-release.json`
     res = await getInfo(url)
   }
-  return _.get(res, 'release.body')
+  return res && res.release
+    ? {
+        body: res.release.body,
+        date: dayjs(res.release.published_at).format('YYYY-MM-DD')
+      }
+    : undefined
 }
