@@ -1,18 +1,28 @@
-<h1 align="center">
-    <a href="https://electerm.github.io/electerm">
+<h1 align="center" style="padding-top: 60px;padding-bottom: 40px;">
+    <a href="https://electerm.html5beta.com">
         <img src="https://github.com/electerm/electerm-resource/raw/master/static/images/electerm.png", alt="" />
     </a>
 </h1>
 
-# electerm
+[中文](README_cn.md)
+
+# electerm [![Tweet](https://img.shields.io/twitter/url/http/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=Open%20sourced%20terminal%2Fssh%2Fsftp%20client(linux%2C%20mac%2C%20win)&url=https%3A%2F%2Fgithub.com%2Felecterm%2Felecterm&hashtags=electerm,ssh,terminal,sftp)
 
 [![GitHub version](https://img.shields.io/github/release/electerm/electerm/all.svg)](https://github.com/electerm/electerm/releases)
-[![GitHub Actions](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fatrox%2Fsync-dotenv%2Fbadge)](https://github.com/electerm/electerm/actions)
+[![Build Status](https://github.com/electerm/electerm/actions/workflows/mac-test-1.yml/badge.svg)](https://github.com/electerm/electerm/actions)
 [![license](https://img.shields.io/github/license/electerm/electerm.svg)](https://github.com/electerm/electerm/blob/master/LICENSE)
 [![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
 [![Get it from the Snap Store](https://img.shields.io/badge/Snap-Store-green)](https://snapcraft.io/electerm)
+[![Get it from the Microsoft Store](https://img.shields.io/badge/Microsoft-Store-blue)](https://www.microsoft.com/store/apps/9NCN7272GTFF)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/electerm?label=Sponsors)](https://github.com/sponsors/electerm)
 
-Terminal/ssh/sftp client(linux, mac, win) based on electron/ssh2/node-pty/xterm/antd/[subx](https://github.com/tylerlong/subx) and other libs.
+Open-sourced terminal/ssh/telnet/serialport/RDP/VNC/sftp client(linux, mac, win).
+
+Powered by [manate](https://github.com/tylerlong/manate)
+
+For experienced developers, you may try the web app version running in browser(including mobile device): [electerm-web](https://github.com/electerm/electerm-web) or [docker image for electerm-web](https://github.com/electerm/electerm-web-docker)
+
+Online demo: [https://electerm-demo.html5beta.com](https://electerm-demo.html5beta.com)
 
 <div align="center">
   <img src="https://github.com/electerm/electerm-resource/raw/master/static/images/electerm.gif", alt="" />
@@ -20,28 +30,34 @@ Terminal/ssh/sftp client(linux, mac, win) based on electron/ssh2/node-pty/xterm/
 
 ## Features
 
-- Works as a terminal/file manager or ssh/sftp client(similar to xshell)
+- Works as a terminal/file manager or ssh/telnet/serialport/RDP/VNC/sftp client
 - Global hotkey to toggle window visibility (similar to guake, default is `ctrl + 2`)
 - Multi platform(linux, mac, win)
-- 🇺🇸 🇨🇳 🇧🇷 🇷🇺 🇪🇸 🇫🇷 🇹🇷 🇭🇰 🇯🇵 🇸🇦 Multi-language support([electerm-locales](https://github.com/electerm/electerm-locales), contributions/fixes welcome)
+- 🇺🇸 🇨🇳 🇧🇷 🇷🇺 🇪🇸 🇫🇷 🇹🇷 🇭🇰 🇯🇵 🇸🇦 🇩🇪 🇰🇷 Multi-language support([electerm-locales](https://github.com/electerm/electerm-locales), contributions/fixes welcome)
 - Double click to directly edit (small) remote files.
-- Edit (small) local files with built-in editor.
 - Auth with publicKey + password.
-- Zmodem(rz, sz).
+- Support Zmodem(rz, sz).
+- Support ssh tunnel.
+- Support [Trzsz](https://github.com/trzsz/trzsz)(trz/tsz), similar to rz/sz, and compatible with tmux.
 - Transparent window(Mac, win).
 - Terminal background image.
 - Global/session proxy.
 - Quick commands
+- UI/terminal theme
 - Sync bookmarks/themes/quick commands to github/gitee secret gist
-- ~~Serial Port support~~(removed after version 1.10.14)
 - Quick input to one or all terminals.
+- AI assistant integration (supporting [DeepSeek](https://www.deepseek.com), OpenAI, and other AI APIs) to help with command suggestions, script writing, and explaining selected terminal content
 - Command line usage: check [wiki](https://github.com/electerm/electerm/wiki/Command-line-usage)
-- Zip/transfer/auto-unzip folders.
+- Deep link support: check [wiki](https://github.com/electerm/electerm/wiki/Deep-link-support)
 
-## Download/install
+## Download
 
-- [https://electerm.github.io/electerm](https://electerm.github.io/electerm)
-- From release: [https://github.com/electerm/electerm/releases](https://github.com/electerm/electerm/releases)
+- [Homepage](https://electerm.html5beta.com)
+- [sourceforge](https://sourceforge.net/projects/electerm.mirror/files/)
+- [github releases](https://github.com/electerm/electerm/releases)
+
+## Install
+
 - For Mac user: `brew install --cask electerm`
 - With snap: `sudo snap install electerm --classic`
 - For some Linux distribution, you can find it from OS default App store(Ubuntu, Deepin, Mint...).
@@ -62,8 +78,8 @@ scoop install dorado/electerm
 ```bash
 npm i -g electerm
 
-# after installation, it will immediately open for windows and linux,
-# for macOS, it will open the drag to install panel
+# After installation, it will immediately open for windows and linux,
+# For macOS, it will open the drag to install panel
 
 ```
 
@@ -74,6 +90,11 @@ npm i -g electerm
 - Npm: If you install from npm, just run `npm i -g electerm` again.
 - If use Snap or some other distribution system, these systems may provide upgrades.
 
+## Themes
+
+- https://github.com/mbadolato/iTerm2-Color-Schemes/tree/master/electerm
+- https://github.com/Hope-IT-Works/electerm-theme-termius
+
 ## Known issues
 
 [https://github.com/electerm/electerm/wiki/Know-issues](https://github.com/electerm/electerm/wiki/Know-issues)
@@ -82,9 +103,29 @@ npm i -g electerm
 
 [https://github.com/electerm/electerm/wiki/Troubleshoot](https://github.com/electerm/electerm/wiki/Troubleshoot)
 
+## Discussion
+
+[Discussion board](https://github.com/electerm/electerm/discussions)
+
+![electerm-wechat-group-qr.jpg](https://electerm.html5beta.com/electerm-wechat-group-qr.jpg)
+
 ## Support
 
-Without user feedback/suggestions/pull requests/language files, this project would not get this far.I would love to hear from you, please tell me what you think, [submit an issue](https://github.com/electerm/electerm/issues), [send me an email](mailto:zxdong@gmail.com), [create/fix language files](https://github.com/electerm/electerm-locales) or create pull requests, all are welcome.
+Would love to hear from you, please tell me what you think, [submit an issue](https://github.com/electerm/electerm/issues), [Start a new discussion](https://github.com/electerm/electerm/discussions/new), [create/fix language files](https://github.com/electerm/electerm-locales) or create pull requests, all welcome.
+
+## Sponsor this project
+
+github sponsor
+
+[https://github.com/sponsors/electerm](https://github.com/sponsors/electerm)
+
+kofi
+
+[https://ko-fi.com/zhaoxudong](https://ko-fi.com/zhaoxudong)
+
+wechat donate
+
+[![wechat donate](https://electerm.html5beta.com/electerm-wechat-donate.png)](https://github.com/electerm)
 
 ## Dev
 
@@ -92,7 +133,7 @@ Without user feedback/suggestions/pull requests/language files, this project wou
 # tested in ubuntu16.04+/mac os 10.13+ only
 # needs nodejs/npm, suggest using nvm to install nodejs/npm
 # https://github.com/creationix/nvm
-# with node 8.6+
+# with nodejs 18.x
 
 git clone git@github.com:electerm/electerm.git
 cd electerm
@@ -114,9 +155,11 @@ npm run fix
 ## Test
 
 ```bash
-npm run pre-test
+npm run prepare-build
+npm run prepare-test
 cp .sample.env .env
-# then edit .env, fill your test host/username/password
+
+# edit .env, fill your test host/username/password, may only works in mac OS
 npm run test
 ```
 
@@ -129,14 +172,18 @@ npm run test
 
 # Build linux only with -l
 npm i
-npm run pre-test
-npm run release -l
-# visit dist/
+npm run prepare-build
+./node_modules/.bin/electron-builder --linux tar.gz
+# or replace tar.gz to rpm/deb/AppImage
+# check dist/ folder
+
+# build for linux arm/
+./node_modules/.bin/electron-builder --linux --arm64
 ```
 
 ## Use
 
-- [Set autorun when login to os](https://github.com/electerm/electerm/wiki/autorun-electerm-when-login-to-os)
+- [Set autorun when login to os](https://github.com/electerm/electerm/wiki/Autorun-electerm-when-login-to-os)
 
 ## Change log
 

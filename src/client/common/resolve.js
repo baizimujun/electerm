@@ -1,4 +1,3 @@
-
 /**
  * smart resolve function
  * @param {String} basePath
@@ -7,24 +6,27 @@
  */
 
 export default (basePath, nameOrDot) => {
-  const sep = basePath.includes('\\') || basePath.includes(':')
-    ? '\\'
-    : '/'
-  if (nameOrDot === '..') {
-    const arr = basePath.split(sep)
-    const { length } = arr
-    if (length === 1) {
-      return '/'
-    }
-    const res = arr.slice(0, length - 1).join(sep)
-    return res || '/'
+  const hasWinDrive = (path) => /^[a-zA-Z]:/.test(path)
+  const isWin = basePath.includes('\\') || nameOrDot.includes('\\') || hasWinDrive(basePath) || hasWinDrive(nameOrDot)
+  const sep = isWin ? '\\' : '/'
+  // Handle Windows drive letters (with or without initial slash)
+  if (/^[a-zA-Z]:/.test(nameOrDot)) {
+    return nameOrDot.replace(/^\//, '').replace(/\//g, sep)
   }
-  const pre = nameOrDot.includes(':') && basePath === '/'
-    ? ''
-    : basePath
-  return pre +
-    (basePath.endsWith(sep) ? '' : sep) +
-    nameOrDot
+  // Handle absolute paths
+  if (nameOrDot.startsWith('/')) {
+    return nameOrDot.replace(/\\/g, sep)
+  }
+  if (nameOrDot === '..') {
+    const parts = basePath.split(sep)
+    if (parts.length > 1) {
+      parts.pop()
+      return isWin && parts.length === 1 ? '/' : parts.join(sep) || '/'
+    }
+    return '/'
+  }
+  const result = basePath.endsWith(sep) ? basePath + nameOrDot : basePath + sep + nameOrDot
+  return isWin && result.length === 3 && result.endsWith(':\\') ? '/' : result
 }
 
 export const osResolve = (...args) => {

@@ -2,87 +2,99 @@
  * file section
  */
 
-import React from 'react'
-import runIdle from '../../common/run-idle'
+import { createRef } from 'react'
+import { Component } from '../common/component'
+import { refs } from '../common/ref'
 import {
   CloseOutlined,
-  CodeOutlined,
-  CopyOutlined,
-  EditOutlined,
   Loading3QuartersOutlined,
   BorderlessTableOutlined
 } from '@ant-design/icons'
-
-import { Tooltip, message } from 'antd'
+import {
+  Tooltip,
+  message,
+  Dropdown
+} from 'antd'
 import classnames from 'classnames'
-import copy from 'json-deep-copy'
-import _ from 'lodash'
+import { pick } from 'lodash-es'
 import Input from '../common/input-auto-focus'
 import createName from '../../common/create-title'
 import { addClass, removeClass } from '../../common/class'
-import {
-  terminalSshConfigType,
-  ctrlOrCmd
-} from '../../common/constants'
+import isDark from '../../common/is-color-dark'
+import { action } from 'manate'
+import iconsMap from '../sys-menu/icons-map.jsx'
+import { shortcutDescExtend } from '../shortcuts/shortcut-handler.js'
 
-const { prefix } = window
-const e = prefix('tabs')
-const m = prefix('menu')
+const e = window.translate
 const onDragCls = 'ondrag-tab'
 const onDragOverCls = 'dragover-tab'
 
-export default class Tab extends React.Component {
-  constructor (props) {
-    super(props)
-    this.state = {
-      terminalOnData: false,
-      tab: copy(props.tab)
-    }
+class Tab extends Component {
+  state = {
+    terminalOnData: false
   }
 
+  tabRef = createRef()
+
   componentDidMount () {
-    this.dom = document.getElementById('id' + this.state.tab.id)
+    this.id = 'tab-' + this.props.tab.id
+    refs.add(this.id, this)
     window.addEventListener('message', this.onEvent)
   }
 
   componentDidUpdate (prevProps) {
-    if (!_.isEqual(prevProps.tab, this.props.tab)) {
-      this.setState({
-        tab: copy(this.props.tab)
-      })
+    if (this.props.openContextMenu && !prevProps.openContextMenu) {
+      this.handleContextMenu()
+    }
+    if (this.props.contextFunc && !prevProps.contextFunc) {
+      this[this.props.contextFunc](...this.props.contextArgs)
     }
   }
 
   componentWillUnmount () {
-    window.removeEventListener('message', this.onEvent)
-    clearTimeout(this.handler)
+    refs.remove(this.id)
+    clearTimeout(this.timer)
+    this.timer = null
   }
 
-  modifier = (...args) => {
-    runIdle(() => this.setState(...args))
-  }
-
-  onEvent = (e) => {
-    if (
-      e.data &&
-      e.data.action === 'terminal-receive-data' &&
-      e.data.tabId === this.state.tab.id
-    ) {
-      this.modifier({
-        terminalOnData: true
-      })
-      if (this.handler) {
-        clearTimeout(this.handler)
-      }
-      this.handler = setTimeout(this.offTerminalOnData, 4000)
+  notifyOnData = () => {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
     }
+    this.setState({
+      terminalOnData: true
+    })
+    this.timer = setTimeout(this.clearTerminalOnData, 4000)
   }
 
-  offTerminalOnData = () => {
-    this.modifier({
+  clearTerminalOnData = () => {
+    this.setState({
       terminalOnData: false
     })
   }
+
+  // shouldComponentUpdate (nextProps) {
+  //   return this.shouldUpdate(this.props, nextProps)
+  // }
+
+  // shouldUpdate = (prevProps, nextProps) => {
+  //   // todo activeTabId still need improve
+  //   const pickKeys = [
+  //     'activeTabId',
+  //     'height',
+  //     'isLast',
+  //     'isMaximized',
+  //     'config',
+  //     'tab',
+  //     'width',
+  //     'openContextMenu',
+  //     'contextFunc'
+  //   ]
+
+  //   // compare only the relevant props
+  //   return !isEqual(pick(prevProps, pickKeys), pick(nextProps, pickKeys))
+  // }
 
   clearCls = () => {
     document.querySelectorAll('.' + onDragOverCls).forEach((d) => {
@@ -90,13 +102,17 @@ export default class Tab extends React.Component {
     })
   }
 
+  handleClick = (e) => {
+    window.store.clickTab(this.props.tab.id, this.props.batch)
+  }
+
   onDrag = () => {
-    addClass(this.dom, onDragCls)
+    addClass(this.tabRef.current, onDragCls)
   }
 
   onDragEnter = () => {
     this.clearCls()
-    addClass(this.dom, onDragOverCls)
+    addClass(this.tabRef.current, onDragOverCls)
   }
 
   onDragExit = () => {
@@ -114,14 +130,14 @@ export default class Tab extends React.Component {
   onDragOver = e => {
     // debug('ondragover')
     // debug(e.target)
-    // removeClass(this.dom, 'sftp-dragover')
+    // removeClass(this.tabRef.current, 'sftp-dragover')
     e.preventDefault()
   }
 
   onDragStart = e => {
     // debug('ondragstart')
     // debug(e.target)
-    e.dataTransfer.setData('fromFile', JSON.stringify(this.state.tab))
+    e.dataTransfer.setData('fromFile', JSON.stringify(this.props.tab))
     // e.effectAllowed = 'copyMove'
   }
 
@@ -131,188 +147,187 @@ export default class Tab extends React.Component {
     if (!target) {
       return
     }
-    // debug('target drop', target)
+
     const fromTab = JSON.parse(e.dataTransfer.getData('fromFile'))
-    const onDropTab = document.querySelector('.' + onDragOverCls)
+    let onDropTab = target
+    while (onDropTab) {
+      if (onDropTab.classList && onDropTab.classList.contains('tab')) {
+        break
+      }
+      onDropTab = onDropTab.parentElement
+    }
     if (!onDropTab || !fromTab) {
       return
     }
+
     const dropId = onDropTab.getAttribute('data-id')
     if (!dropId || dropId === fromTab.id) {
       return
     }
+
     const { id } = fromTab
-    const tabs = copy(this.props.tabs)
-    const indexFrom = _.findIndex(tabs, t => t.id === id)
-    let indexDrop = _.findIndex(tabs, t => t.id === dropId)
-    if (indexDrop > indexFrom) {
-      indexDrop = indexDrop - 1
+    const storeTabs = window.store.tabs
+    const indexFrom = storeTabs.findIndex(t => t.id === id)
+    let indexDrop = storeTabs.findIndex(t => t.id === dropId)
+
+    if (indexFrom >= 0 && indexDrop >= 0) {
+      const targetTab = storeTabs[indexDrop]
+      const fromBatch = fromTab.batch
+
+      // Handle currentTab change if needed
+      if (window.store[`activeTabId${fromBatch}`] === id && fromBatch !== targetTab.batch) {
+        // Find next tab in the same batch
+        const nextTab = storeTabs.find((t, i) =>
+          i !== indexFrom && t.batch === fromBatch
+        )
+        window.store[`activeTabId${fromBatch}`] = nextTab ? nextTab.id : ''
+      }
+
+      // Reorder tabs and update batch
+      action(function () {
+        const [tab] = storeTabs.splice(indexFrom, 1)
+        tab.batch = targetTab.batch // Update the batch to match target tab's batch
+        if (indexFrom < indexDrop) {
+          indexDrop = indexDrop - 1
+        }
+        storeTabs.splice(indexDrop, 0, tab)
+      })()
+      window.store.focus()
     }
-    tabs.splice(indexFrom, 1)
-    tabs.splice(indexDrop, 0, fromTab)
-    this.props.store.storeAssign({
-      tabs
-    })
   }
 
-  reloadTab = async () => {
-    this.props.store.reloadTab(this.state.tab)
+  handleReloadTab = async () => {
+    window.store.reloadTab(this.props.tab.id)
   }
 
   onDragEnd = e => {
-    removeClass(this.dom, onDragCls)
+    removeClass(this.tabRef.current, onDragCls)
     this.clearCls()
     e && e.dataTransfer && e.dataTransfer.clearData()
   }
 
-  close = () => {
-    this.props.store.delTab({ id: this.state.tab.id })
-    if (this.props.tabs.length <= 1) {
-      setTimeout(this.props.store.addTab, 1)
-    }
+  handleClose = () => {
+    window.store.delTab(this.props.tab.id)
   }
 
-  dup = () => {
-    this.props.store.onDuplicateTab(this.props.tab)
+  handleDup = () => {
+    window.store.duplicateTab(
+      this.props.tab.id
+    )
+  }
+
+  cloneToNextLayout = () => {
+    window.store.cloneToNextLayout(this.props.tab)
+  }
+
+  newTab = () => {
+    this.props.addTab()
   }
 
   doRename = () => {
-    const tab = copy(this.state.tab)
+    const { tab } = this.props
     tab.titleTemp = tab.title || ''
     tab.isEditting = true
-    this.setState({
-      tab
-    })
   }
 
-  onBlur = () => {
-    const tab = copy(this.state.tab)
-    const { titleTemp, title, id, host } = tab
+  handleBlur = () => {
+    const { tab } = this.props
+    const { titleTemp, title, host } = tab
     if (!titleTemp && !host) {
-      return message.warn(e('titleEmptyWarn'))
+      return message.warning(e('titleEmptyWarn'))
     }
     delete tab.isEditting
     if (title === titleTemp) {
       delete tab.titleTemp
-      return this.setState({
-        tab
-      })
     }
-    this.setState({
-      tab
-    })
-    this.props.store.editTab(id, { title: titleTemp })
+    tab.title = titleTemp
   }
 
-  onChange = e => {
+  handleChange = e => {
+    const { tab } = this.props
     const titleTemp = e.target.value
-    const tab = copy(this.state.tab)
     tab.titleTemp = titleTemp
-    this.setState({
-      tab
-    })
   }
 
   closeOther = () => {
-    this.props.store.storeAssign({
-      tabs: [this.props.tab],
-      currentTabId: this.props.tab.id
-    })
+    window.store.closeOtherTabs(this.props.tab.id)
   }
 
   closeTabsRight = () => {
-    let { tabs, tab, currentTabId } = this.props
-    const index = _.findIndex(tabs, t => t.id === tab.id)
-    tabs = tabs.slice(0, index + 1)
-    const update = {
-      tabs
-    }
-    if (!_.some(tabs, t => t.id === currentTabId)) {
-      update.currentTabId = tabs[0].id
-    }
-    this.props.store.storeAssign(update)
+    window.store.closeTabsRight(this.props.tab.id)
   }
 
-  renderContext () {
-    const { tabs, tab } = this.props
+  renderContext = () => {
+    const { tabs, tabIndex } = this.props
     const len = tabs.length
-    const index = _.findIndex(tabs, t => t.id === tab.id)
-    const nother = len === 1
+    const index = tabIndex
     const noRight = index >= len - 1
-    const cls = 'pd2x pd1y context-item pointer'
-    const isSshConfig = tab.type === terminalSshConfigType
-    return (
-      <div>
-        <div
-          className={cls}
-          onClick={this.close}
-        >
-          <CloseOutlined /> {e('close')} ({ctrlOrCmd} + W)
-        </div>
-        {
-          nother
-            ? null
-            : (
-              <div
-                className={cls}
-                onClick={this.closeOther}
-              >
-                <CloseOutlined /> {e('closeOtherTabs')}
-              </div>
-            )
-        }
-        {
-          noRight
-            ? null
-            : (
-              <div
-                className={cls}
-                onClick={this.closeTabsRight}
-              >
-                <CloseOutlined /> {e('closeTabRight')}
-              </div>
-            )
-        }
+    const reloadShortcut = this.getShortcut('app_reloadCurrentTab')
+    const closeShortcut = this.getShortcut('app_closeCurrentTab')
+    const cloneToNextShortcut = this.getShortcut('app_cloneToNextLayout')
 
-        <div
-          className={cls}
-          onClick={() => this.props.store.addTab()}
-        >
-          <CodeOutlined /> {e('newTab')}
-        </div>
-        <div
-          className={cls}
-          onClick={this.dup}
-        >
-          <CopyOutlined /> {e('duplicate')}
-        </div>
-        <div
-          className={cls + (isSshConfig ? ' disabled' : '')}
-          onClick={isSshConfig ? _.noop : this.doRename}
-        >
-          <EditOutlined /> {e('rename')}
-        </div>
-        <div
-          className={cls}
-          onClick={this.reloadTab}
-        >
-          <Loading3QuartersOutlined /> {m('reload')}
-        </div>
-      </div>
-    )
+    const x = [
+      {
+        key: 'handleClose',
+        icon: <iconsMap.CloseCircleOutlined />,
+        label: e('close'),
+        extra: closeShortcut
+      },
+      {
+        key: 'closeOther',
+        icon: <iconsMap.CloseCircleOutlined />,
+        label: e('closeOtherTabs')
+      },
+      !noRight && {
+        key: 'closeTabsRight',
+        icon: <iconsMap.CloseCircleOutlined />,
+        label: e('closeTabRight')
+      },
+      {
+        key: 'newTab',
+        icon: <iconsMap.CodeOutlined />,
+        label: e('newTab')
+      },
+      {
+        key: 'handleDup',
+        icon: <iconsMap.CopyOutlined />,
+        label: e('duplicate')
+      },
+      {
+        key: 'cloneToNextLayout',
+        icon: <iconsMap.CopyOutlined />,
+        label: e('cloneToNextLayout'),
+        extra: cloneToNextShortcut
+      },
+      {
+        key: 'doRename',
+        icon: <iconsMap.EditOutlined />,
+        label: e('rename')
+      },
+      {
+        key: 'handleReloadTab',
+        icon: <iconsMap.ReloadOutlined />,
+        label: e('reload'),
+        extra: reloadShortcut
+      }
+    ].filter(Boolean)
+    return x
   }
 
-  onContextMenu = e => {
-    e.preventDefault()
-    const { target } = e
-    const rect = target.getBoundingClientRect()
-    const content = this.renderContext()
-    this.props.store.openContextMenu({
-      content,
+  onContextMenu = ({ key }) => {
+    this[key]()
+  }
+
+  handleContextMenu = () => {
+    const rect = this.tabRef.current.getBoundingClientRect()
+    const items = this.renderContext()
+    window.store.openContextMenu({
+      items,
       pos: {
         left: rect.left,
         top: rect.top + 20
-      }
+      },
+      id: this.props.tab.id
     })
   }
 
@@ -324,26 +339,76 @@ export default class Tab extends React.Component {
       <div className={cls + ' pd1x'}>
         <Input
           value={titleTemp}
-          onChange={this.onChange}
-          onBlur={this.onBlur}
-          onPressEnter={this.onBlur}
+          onChange={this.handleChange}
+          onBlur={this.handleBlur}
+          onPressEnter={this.handleBlur}
         />
       </div>
     )
   }
 
+  renderTitle = (sshTunnelResults, title) => {
+    const list = sshTunnelResults.map(({ sshTunnel: obj, error }, i) => {
+      const {
+        sshTunnelLocalPort,
+        sshTunnelRemoteHost = '127.0.0.1',
+        sshTunnelRemotePort,
+        sshTunnel,
+        sshTunnelLocalHost = '127.0.0.1',
+        name
+      } = obj
+      let tunnel
+      if (sshTunnel === 'dynamicForward') {
+        tunnel = `sock5://${sshTunnelLocalHost}:${sshTunnelLocalPort}`
+      } else {
+        tunnel = sshTunnel === 'forwardRemoteToLocal'
+          ? `-> ${e('remote')}:${sshTunnelRemoteHost}:${sshTunnelRemotePort} -> ${sshTunnelLocalHost}:${sshTunnelLocalPort}`
+          : `-> ${e('local')}:${sshTunnelLocalHost}:${sshTunnelLocalPort} -> ${sshTunnelRemoteHost}:${sshTunnelRemotePort}`
+      }
+      if (error) {
+        tunnel = `error: ${tunnel}`
+      }
+      if (name) {
+        tunnel = `[${name}] ${tunnel}`
+      }
+      return <div key={tunnel}>{tunnel}</div>
+    })
+    return (
+      <div>
+        <div>{title}</div>
+        {list}
+      </div>
+    )
+  }
+
+  renderCloseIcon () {
+    return (
+      <span className='tab-close pointer'>
+        <CloseOutlined onClick={this.handleClose} />
+      </span>
+    )
+  }
+
   render () {
+    const { isLast, tab, currentBatchTabId } = this.props
     const {
-      currentTabId,
-      onChangeTabId,
-      onDuplicateTab
-    } = this.props.store
-    const { tab, terminalOnData } = this.state
-    const { id, isEditting, status, isTransporting } = tab
-    const active = id === currentTabId
+      id,
+      isEditting,
+      status,
+      isTransporting,
+      sshTunnelResults
+    } = tab
+    const {
+      terminalOnData
+    } = this.state
+    const active = id === currentBatchTabId
     const cls = classnames(
+      `tab-${id}`,
       'tab',
       { active },
+      {
+        'tab-last': isLast
+      },
       status,
       {
         'is-terminal-active': terminalOnData
@@ -353,20 +418,38 @@ export default class Tab extends React.Component {
       }
     )
     const title = createName(tab)
+    let tooltipTitle = title
+    if (sshTunnelResults) {
+      tooltipTitle = this.renderTitle(sshTunnelResults, title)
+    }
     if (isEditting) {
       return this.renderEditting(tab, cls)
     }
+    const dropdownProps = {
+      menu: {
+        items: this.renderContext(),
+        onClick: this.onContextMenu
+      },
+      trigger: ['contextMenu']
+    }
+    const { tabCount, color = '#0088cc' } = tab
+    const styleTag = color
+      ? {
+          background: color,
+          color: isDark(color) ? '#fff' : '#000'
+        }
+      : {}
     return (
       <Tooltip
-        title={title}
+        title={tooltipTitle}
         placement='top'
       >
         <div
           className={cls}
           draggable
-          id={'id' + id}
+          ref={this.tabRef}
           data-id={id}
-          {..._.pick(this, [
+          {...pick(this, [
             'onDrag',
             'onDragEnter',
             'onDragExit',
@@ -377,26 +460,33 @@ export default class Tab extends React.Component {
             'onDragEnd'
           ])}
         >
-          <div
-            className='tab-title elli pd1x'
-            onClick={() => onChangeTabId(id)}
-            onDoubleClick={() => onDuplicateTab(tab)}
-            onContextMenu={this.onContextMenu}
-          >
-            <Loading3QuartersOutlined
-              className='pointer tab-reload mg1r'
-              onClick={this.reloadTab}
-              title={m('reload')} />
-            {title}
-          </div>
+          <Dropdown {...dropdownProps}>
+            <div
+              className='tab-title elli pd1x'
+              onClick={this.handleClick}
+              onDoubleClick={this.handleDup}
+            >
+              <Loading3QuartersOutlined
+                className='pointer tab-reload mg1r'
+                onClick={this.handleReloadTab}
+                title={e('reload')}
+              />
+              <span className='tab-title'>
+                <span className='iblock mg1r tab-count' style={styleTag}>{tabCount}</span>
+                <span className='mg1r'>{title}</span>
+              </span>
+            </div>
+          </Dropdown>
           <div className={'tab-status ' + status} />
           <div className='tab-traffic' />
           <BorderlessTableOutlined className='tab-terminal-feed' />
-          <span className='tab-close pointer'>
-            <CloseOutlined onClick={this.close} />
-          </span>
+          {
+            this.renderCloseIcon()
+          }
         </div>
       </Tooltip>
     )
   }
 }
+
+export default shortcutDescExtend(Tab)

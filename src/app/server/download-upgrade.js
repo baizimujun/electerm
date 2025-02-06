@@ -6,62 +6,38 @@ const fs = require('fs')
 const { resolve } = require('path')
 const _ = require('lodash')
 const rp = require('axios')
-const { packInfo, tempDir } = require('../utils/constants')
+const { packInfo, tempDir } = require('../common/runtime-constants')
 const installSrc = require('../lib/install-src')
 const { fsExport } = require('../lib/fs')
-const SocksProxyAgent = require('socks-proxy-agent')
-const HttpsProxyAgent = require('https-proxy-agent')
+const { createProxyAgent } = require('../lib/proxy-agent')
 const { openFile, rmrf } = fsExport
+const log = require('../common/log')
+const globalState = require('./global-state')
 
-function createAgent (proxy) {
-  if (!proxy.enableGlobalProxy) {
-    return {}
-  }
-  const {
-    proxyPort,
-    proxyType,
-    proxyIp,
-    proxyUsername,
-    proxyPassword
-  } = proxy
-  let agent
-  const agentType = proxyType === '0'
-    ? 'httpAgent'
-    : 'httpsAgent'
-  if (proxyType !== '0' && proxyType !== '1') {
-    agent = new SocksProxyAgent({
-      type: parseInt(proxyType, 10),
-      port: proxyPort,
-      host: proxyIp,
-      password: proxyPassword,
-      username: proxyUsername
-    })
+rp.defaults.proxy = false
+
+function getUrl (url, mirror) {
+  if (mirror === 'download-electerm') {
+    // return `https://sciproxy.com/${url}`
+    return url
+  } else if (mirror === 'github') {
+    return url
   } else {
-    const dict = {
-      0: 'http',
-      1: 'https'
-    }
-    agent = new HttpsProxyAgent({
-      protocol: dict[proxyType],
-      port: proxyPort,
-      host: proxyIp
-    })
-  }
-  return {
-    agent,
-    agentType
+    const arr = url.split('/')
+    const len = arr.length
+    return `https://master.dl.sourceforge.net/project/electerm.mirror/${arr[len - 2]}/${arr[len - 1]}?viasf=1`
   }
 }
 
 function getReleaseInfo (
-  filter, releaseInfoUrl, agent, agentType
+  filter, releaseInfoUrl, agent
 ) {
   const conf = {
     url: releaseInfoUrl,
     timeout: 15000
   }
-  if (agentType) {
-    conf[agentType] = agent
+  if (agent) {
+    conf.httpsAgent = agent
   }
   return rp(conf)
     .then((res) => {
@@ -81,9 +57,10 @@ class Upgrade {
     const {
       id,
       ws,
-      proxy
+      proxy,
+      mirror
     } = this.options
-    const { agent, agentType } = createAgent(proxy)
+    const agent = createProxyAgent(proxy)
     const releaseInfoUrl = `${packInfo.homepage}/data/electerm-github-release.json?_=${+new Date()}`
     const filter = r => {
       return r.name.includes(installSrc)
@@ -99,14 +76,14 @@ class Upgrade {
     //     return /mac\.dmg$/.test(r.name)
     //   }
     // }
-    const releaseInfo = await getReleaseInfo(filter, releaseInfoUrl, agent, agentType)
+    const releaseInfo = await getReleaseInfo(filter, releaseInfoUrl, agent)
       .catch(this.onError)
     if (!releaseInfo) {
       return
     }
     const localPath = resolve(tempDir, releaseInfo.name)
-    const remotePath = releaseInfo.browser_download_url
-    await rmrf(localPath)
+    const remotePath = getUrl(releaseInfo.browser_download_url, mirror)
+    await rmrf(localPath).catch(log.error)
     const { size } = releaseInfo
     this.id = id
     this.localPath = localPath
@@ -114,7 +91,14 @@ class Upgrade {
       url: remotePath,
       httpsAgent: agent,
       responseType: 'stream'
-    }).then(r => r.data)
+    })
+      .then(r => r.data)
+      .catch(err => {
+        this.onError(err, id, ws)
+      })
+    if (!readSteam) {
+      return
+    }
     const writeSteam = fs.createWriteStream(localPath)
 
     let count = 0
@@ -164,9 +148,12 @@ class Upgrade {
   onEnd (id, ws) {
     if (!this.onDestroy) {
       openFile(this.localPath)
+      process.send({
+        showFileInFolder: this.localPath
+      })
       ws.s({
         id: 'transfer:end:' + id,
-        data: null
+        data: this.dir
       })
     }
   }
@@ -195,11 +182,10 @@ class Upgrade {
     this.onDestroy = true
     this.readSteam && this.readSteam.destroy()
     this.ws && this.ws.close()
-    delete global.upgradeInsts[this.id]
+    globalState.removeUpgradeInst(this.id)
   }
 
   // end
 }
 
-exports.createAgent = createAgent
 exports.Upgrade = Upgrade

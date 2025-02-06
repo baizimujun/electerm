@@ -1,10 +1,10 @@
 /**
- * upgrade database to v1.5.12
+ * upgrade database to v1.7.0
  */
 
 const { dbAction } = require('../lib/nedb')
 const { updateDBVersion } = require('./version-upgrade')
-const log = require('../utils/log')
+const log = require('../common/log')
 const defaults = require('./db-defaults')
 
 async function fixAll () {
@@ -18,9 +18,9 @@ async function fixAll () {
     const updates = q._id === 'default'
       ? defaultThemeConfig
       : {
-        ...item,
-        uiThemeConfig: defaultThemeConfig.uiThemeConfig
-      }
+          ...item,
+          uiThemeConfig: defaultThemeConfig.uiThemeConfig
+        }
     await dbAction('terminalThemes', 'update', q, updates).catch(log.error)
   }
   await dbAction('terminalThemes', 'insert', defaultLightThemeConfig).catch(log.error)

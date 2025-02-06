@@ -1,219 +1,215 @@
 import {
   BookOutlined,
-  ClockCircleOutlined,
   CloudSyncOutlined,
   InfoCircleOutlined,
   PictureOutlined,
   PlusCircleOutlined,
   SettingOutlined,
-  SwapOutlined,
-  UpCircleOutlined
+  UpCircleOutlined,
+  BarsOutlined
 } from '@ant-design/icons'
-
+import { useRef, memo } from 'react'
 import { Tooltip } from 'antd'
-import { Component } from '../common/react-subx'
-import BookMarksWrap from './bookmark'
-import HistoryWrap from './history'
-import TransferHistoryModal from './transfer-history-modal'
-import MenuBtn from './menu-btn'
-import InfoModal from './info-modal'
-import { sidebarWidth } from '../../common/constants'
+import SideBarPanel from './sidebar-panel'
+import TransferList from './transfer-list'
+import MenuBtn from '../sys-menu/menu-btn'
+import {
+  sidebarWidth,
+  settingMap,
+  modals
+} from '../../common/constants'
+import SideIcon from './side-icon'
+import SidePanel from './side-panel'
 import './sidebar.styl'
 
-const { prefix } = window
-const e = prefix('control')
-const c = prefix('common')
-const m = prefix('menu')
-const h = prefix('transferHistory')
-const t = prefix('terminalThemes')
-const u = prefix('updater')
-const ss = prefix('settingSync')
+const e = window.translate
 
-export default class Sidebar extends Component {
-  handler = null
+export default memo(function Sidebar (props) {
+  const handler = useRef(null)
 
-  setOpenedSideBar = (bar) => {
-    const { store } = this.props
-    const {
-      storeAssign
-    } = store
-    return storeAssign({
-      openedSideBar: bar
-    })
-  }
+  const {
+    height,
+    upgradeInfo,
+    settingTab,
+    settingItem,
+    isSyncingSetting,
+    leftSidebarWidth,
+    pinned,
+    fileTransfers,
+    openedSideBar,
+    transferHistory,
+    transferTab,
+    showModal,
+    showInfoModal,
+    sidebarPanelTab
+  } = props
 
-  onMouseLeave = () => {
-    if (this.props.store.pinned) {
+  const { store } = window
+
+  const handleMouseLeave = () => {
+    if (pinned) {
       return false
     }
-    const interval = 400
-    this.handler = setTimeout(
-      () => this.setOpenedSideBar(''),
-      interval
+    handler.current = setTimeout(
+      () => store.setOpenedSideBar(''),
+      400
     )
   }
 
-  onMouseEnterBookmark = () => {
-    if (this.props.store.pinned) {
+  const handleMouseEnterBookmark = () => {
+    if (pinned) {
       return false
     }
-    clearTimeout(this.handler)
-    this.setOpenedSideBar('bookmarks')
+    clearTimeout(handler.current)
+    store.setOpenedSideBar('bookmarks')
   }
 
-  onMouseEnterHistory = () => {
-    if (this.props.store.pinned) {
-      return false
-    }
-    clearTimeout(this.handler)
-    this.setOpenedSideBar('history')
+  const handleShowUpgrade = () => {
+    window.store.upgradeInfo.showUpgradeModal = true
   }
 
-  showUpgrade = () => {
-    this.props.store.storeAssign({
-      upgradeInfo: {
-        ...this.props.store.upgradeInfo,
-        showUpgradeModal: true
+  const {
+    onNewSsh,
+    openSetting,
+    openAbout,
+    openSettingSync,
+    openTerminalThemes,
+    onClickBookmark,
+    toggleBatchOp,
+    setLeftSidePanelWidth
+  } = store
+  const {
+    showUpgradeModal,
+    upgradePercent,
+    checkingRemoteVersion,
+    shouldUpgrade
+  } = upgradeInfo
+  const showSetting = showModal === modals.setting
+  const showBatchOp = showModal === modals.batchOps
+  const settingActive = showSetting && settingTab === settingMap.setting && settingItem.id === 'setting-common'
+  const syncActive = showSetting && settingTab === settingMap.setting && settingItem.id === 'setting-sync'
+  const themeActive = showSetting && settingTab === settingMap.terminalThemes
+  const bookmarksActive = showSetting && settingTab === settingMap.bookmarks
+  const sideProps = openedSideBar
+    ? {
+        className: 'sidebar-list',
+        style: {
+          width: `${leftSidebarWidth}px`
+        }
       }
-    })
+    : {
+        className: 'sidebar-list'
+      }
+  const sidebarProps = {
+    className: `sidebar type-${openedSideBar}`,
+    style: {
+      width: sidebarWidth,
+      height
+    }
   }
-
-  render () {
-    const { store } = this.props
-    const {
-      openedSideBar,
-      onNewSsh,
-      openSetting,
-      transferHistory,
-      openTransferHistory,
-      openAbout,
-      openSettingSync,
-      height,
-      openTerminalThemes,
-      upgradeInfo,
-      onClickBookmark,
-      onClickHistory
-    } = store
-    const { showUpgradeModal, upgradePercent, checkingRemoteVersion, shouldUpgrade } = upgradeInfo
-    return (
-      <div
-        className={`sidebar type-${openedSideBar}`}
-        style={{
-          width: sidebarWidth,
-          height
-        }}
-      >
-        <TransferHistoryModal
-          store={store}
-        />
-        <div className='sidebar-bar btns'>
-          <div className='control-icon-wrap'>
-            <MenuBtn store={store} />
-          </div>
-          <div
-            className='control-icon-wrap'
-            title={e('newSsh')}
-          >
-            <PlusCircleOutlined
-              className='font22 iblock control-icon'
-              onClick={onNewSsh}
-            />
-          </div>
-          <div
-            className='control-icon-wrap'
-            title={c('bookmarks')}
-          >
-            <BookOutlined
-              onMouseEnter={this.onMouseEnterBookmark}
-              onMouseLeave={this.onMouseLeave}
-              onClick={onClickBookmark}
-              className='font20 iblock control-icon' />
-          </div>
-          <div
-            className='control-icon-wrap'
-            title={c('history')}
-          >
-            <ClockCircleOutlined
-              onMouseEnter={this.onMouseEnterHistory}
-              onMouseLeave={this.onMouseLeave}
-              onClick={onClickHistory}
-              className='font20 iblock control-icon' />
-          </div>
-          <div
-            className='control-icon-wrap'
-            title={t('terminalThemes')}
-          >
-            <PictureOutlined
-              className='font20 iblock pointer control-icon'
-              onClick={openTerminalThemes} />
-          </div>
-          <div
-            className='control-icon-wrap'
-            title={c('setting')}
-          >
-            <SettingOutlined className='iblock font20 control-icon' onClick={openSetting} />
-          </div>
-          <div
-            className='control-icon-wrap'
-            title={ss('settingSync')}
-          >
-            <CloudSyncOutlined className='iblock font20 control-icon' onClick={openSettingSync} />
-          </div>
-          {
-            transferHistory.length
-              ? (
+  const transferProps = {
+    fileTransfers,
+    transferTab,
+    transferHistory
+  }
+  return (
+    <div {...sidebarProps}>
+      <div className='sidebar-bar btns'>
+        <div className='control-icon-wrap'>
+          <MenuBtn store={store} config={store.config} />
+        </div>
+        <SideIcon
+          title={e('newBookmark')}
+        >
+          <PlusCircleOutlined
+            className='font22 iblock control-icon'
+            onClick={onNewSsh}
+          />
+        </SideIcon>
+        <SideIcon
+          title={e(settingMap.bookmarks)}
+          active={bookmarksActive}
+        >
+          <BookOutlined
+            onMouseEnter={handleMouseEnterBookmark}
+            onMouseLeave={handleMouseLeave}
+            onClick={onClickBookmark}
+            className='font20 iblock control-icon'
+          />
+        </SideIcon>
+        <TransferList {...transferProps} />
+        <SideIcon
+          title={e(settingMap.terminalThemes)}
+          active={themeActive}
+        >
+          <PictureOutlined
+            className='font20 iblock pointer control-icon'
+            onClick={openTerminalThemes}
+          />
+        </SideIcon>
+        <SideIcon
+          title={e(settingMap.setting)}
+          active={settingActive}
+        >
+          <SettingOutlined className='iblock font20 control-icon' onClick={openSetting} />
+        </SideIcon>
+        <SideIcon
+          title={e('settingSync')}
+          active={syncActive}
+        >
+          <CloudSyncOutlined
+            className='iblock font20 control-icon'
+            onClick={openSettingSync}
+            spin={isSyncingSetting}
+          />
+        </SideIcon>
+        <SideIcon
+          title={e('batchOp')}
+          active={showBatchOp}
+        >
+          <BarsOutlined className='iblock font20 control-icon' onClick={toggleBatchOp} />
+        </SideIcon>
+        <SideIcon
+          title={e('about')}
+          active={showInfoModal}
+        >
+          <InfoCircleOutlined
+            className='iblock font16 control-icon open-about-icon'
+            onClick={openAbout}
+          />
+        </SideIcon>
+        {
+          !checkingRemoteVersion && !showUpgradeModal && shouldUpgrade
+            ? (
+              <Tooltip
+                title={`${e('upgrading')} ${upgradePercent || 0}%`}
+                placement='right'
+              >
                 <div
                   className='control-icon-wrap'
-                  title={h('transferHistory')}
                 >
-                  <SwapOutlined className='font20 iblock control-icon' onClick={openTransferHistory} />
+                  <UpCircleOutlined
+                    className='iblock font18 control-icon hvr-bob upgrade-icon'
+                    onClick={handleShowUpgrade}
+                  />
                 </div>
+              </Tooltip>
               )
-              : null
-          }
-          <div
-            className='control-icon-wrap'
-            title={m('about')}
-          >
-            <InfoCircleOutlined
-              className='iblock font16 control-icon open-about-icon'
-              onClick={openAbout} />
-          </div>
-          {
-            !checkingRemoteVersion && !showUpgradeModal && shouldUpgrade
-              ? (
-                <Tooltip
-                  title={`${u('upgrading')} ${upgradePercent || 0}%`}
-                  placement='right'
-                >
-                  <div
-                    className='control-icon-wrap'
-                  >
-                    <UpCircleOutlined
-                      className='iblock font18 control-icon hvr-bob upgrade-icon'
-                      onClick={this.showUpgrade} />
-                  </div>
-                </Tooltip>
-              )
-              : null
-          }
-        </div>
-        <InfoModal store={store} />
-        <div
-          className='sidebar-list'
-        >
-          <BookMarksWrap
-            store={store}
-            onMouseEnter={this.onMouseEnterBookmark}
-            onMouseLeave={this.onMouseLeave}
-          />
-          <HistoryWrap
-            store={store}
-            onMouseEnter={this.onMouseEnterHistory}
-            onMouseLeave={this.onMouseLeave}
-          />
-        </div>
+            : null
+        }
       </div>
-    )
-  }
-}
+      <SidePanel
+        sideProps={sideProps}
+        setLeftSidePanelWidth={setLeftSidePanelWidth}
+        leftSidebarWidth={leftSidebarWidth}
+      >
+        <SideBarPanel
+          pinned={pinned}
+          sidebarPanelTab={sidebarPanelTab}
+          onMouseEnter={handleMouseEnterBookmark}
+          onMouseLeave={handleMouseLeave}
+        />
+      </SidePanel>
+    </div>
+  )
+})
