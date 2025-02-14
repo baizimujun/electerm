@@ -2,17 +2,22 @@
  * btns
  */
 
-import { memo } from 'react'
 import { CloseOutlined, MinusOutlined } from '@ant-design/icons'
+import { auto } from 'manate/react'
+import {
+  isMacJs
+} from '../../common/constants'
 
-const { prefix } = window
-const m = prefix('menu')
+const e = window.translate
 
-export default memo(props => {
+export default auto(function WindowControl (props) {
   const {
     isMaximized,
-    closeApp
-  } = props
+    config
+  } = props.store
+  if (config.useSystemTitleBar || isMacJs) {
+    return null
+  }
   const minimize = () => {
     window.pre.runGlobalAsync('minimize')
   }
@@ -22,18 +27,23 @@ export default memo(props => {
   const unmaximize = () => {
     window.pre.runGlobalAsync('unmaximize')
   }
+  const closeApp = () => {
+    window.store.exit()
+  }
   return (
     <div className='window-controls'>
       <div className='window-control-box window-control-minimize' onClick={minimize}>
-        <MinusOutlined title={m('minimize')} className='iblock font12 widnow-control-icon' />
+        <MinusOutlined title={e('minimize')} className='iblock font12 widnow-control-icon' />
       </div>
-      <div className='window-control-box window-control-maximize'
+      <div
+        className='window-control-box window-control-maximize'
         onClick={
           isMaximized ? unmaximize : maximize
-        }>
+        }
+      >
         <span
           title={
-            isMaximized ? m('unmaximize') : m('maximize')
+            isMaximized ? e('unmaximize') : e('maximize')
           }
           className={
             'iblock font12 icon-maximize widnow-control-icon ' +
@@ -42,7 +52,7 @@ export default memo(props => {
         />
       </div>
       <div className='window-control-box window-control-close' onClick={closeApp}>
-        <CloseOutlined title={m('close')} className='iblock font12 widnow-control-icon' />
+        <CloseOutlined title={e('close')} className='iblock font12 widnow-control-icon' />
       </div>
     </div>
   )

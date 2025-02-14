@@ -5,36 +5,31 @@
 /**
  * bookmark form
  */
-import { useState } from 'react'
-import { useDelta, useConditionalEffect } from 'react-delta'
-import { ArrowDownOutlined, ArrowUpOutlined, QuestionCircleOutlined, SaveOutlined, ClearOutlined } from '@ant-design/icons'
-import { Button, Input, notification, Tooltip, Form, Switch } from 'antd'
+import { useDelta, useConditionalEffect } from 'react-delta-hooks'
+import { ArrowDownOutlined, ArrowUpOutlined, SaveOutlined, ClearOutlined } from '@ant-design/icons'
+import { Button, Input, notification, Form } from 'antd'
 import Link from '../common/external-link'
-import moment from 'moment'
+import dayjs from 'dayjs'
 import eq from 'fast-deep-equal'
-import { syncTokenCreateUrls } from '../../common/constants'
+import { syncTokenCreateUrls, syncTypes } from '../../common/constants'
 import './sync.styl'
+import HelpIcon from '../common/help-icon'
+import ServerDataStatus from './server-data-status'
 
 const FormItem = Form.Item
-const { prefix } = window
-const e = prefix('form')
-const ss = prefix('settingSync')
-const s = prefix('setting')
-const sh = prefix('ssh')
+const e = window.translate
 
 export default function SyncForm (props) {
   const [form] = Form.useForm()
-  const [hide, setState] = useState(true)
   const delta = useDelta(props.formData)
   useConditionalEffect(() => {
     form.resetFields()
   }, delta && delta.prev && !eq(delta.prev, delta.curr))
-
-  function showGistForm () {
-    setState(false)
-  }
-
+  const { syncType } = props
   function disabled () {
+    if (syncType === syncTypes.cloud) {
+      return !props.formData.token
+    }
     const {
       token,
       gistId
@@ -49,35 +44,44 @@ export default function SyncForm (props) {
     }
     if (res.gistId) {
       up[syncType + 'GistId'] = res.gistId
+    } else if (syncType === syncTypes.cloud) {
+      up[syncType + 'GistId'] = 'cloud'
     }
-    props.store.updateSyncSetting(up)
-    const test = await props.store.testSyncToken(syncType, res.gistId)
+    up[syncType + 'SyncPassword'] = res.syncPassword || ''
+    if (res.apiUrl) {
+      up[syncType + 'ApiUrl'] = res.apiUrl
+    } else if (syncType === syncTypes.cloud) {
+      up[syncType + 'ApiUrl'] = 'https://electerm-cloud.html5beta.com/api/sync'
+      // up[syncType + 'ApiUrl'] = 'http://127.0.0.1:5678/api/sync'
+    }
+    window.store.updateSyncSetting(up)
+    const test = await window.store.testSyncToken(syncType, res.gistId)
     if (!test) {
       return notification.error({
         message: 'token invalid'
       })
     }
-    if (!res.gistId) {
-      props.store.createGist(syncType)
+    if (!res.gistId && syncType !== syncTypes.custom && syncType !== syncTypes.cloud) {
+      window.store.createGist(syncType)
     }
   }
 
   function upload () {
-    props
+    window
       .store
       .uploadSetting(props.syncType)
-      .catch(props.store.onError)
+      .catch(window.store.onError)
   }
 
   function download () {
-    props
+    window
       .store
       .downloadSetting(props.syncType)
-      .catch(props.store.onError)
+      .catch(window.store.onError)
   }
 
   // onChangeAutoSync = checked => {
-  //   this.props.store.updateSyncSetting({
+  //   this.window.store.updateSyncSetting({
   //     autoSync: checked
   //   })
   // }
@@ -98,125 +102,190 @@ export default function SyncForm (props) {
   const {
     lastSyncTime = ''
   } = props.formData
-  const cls = hide ? 'hide' : ''
-  const { syncType } = props
+
+  const isCustom = syncType === syncTypes.custom
   const timeFormatted = lastSyncTime
-    ? moment(lastSyncTime).format('YYYY-MM-DD HH:mm:ss')
+    ? dayjs(lastSyncTime).format('YYYY-MM-DD HH:mm:ss')
     : '-'
-  const tokenLabel = (
-    <Tooltip
-      title={
-        <span>
-          {syncType} personal access token
-          <Link className='mg1l' to={getTokenCreateGuideUrl()} />
-        </span>
-      }
-    >
+  const customNameMapper = {
+    token: 'JWT Secret',
+    gist: 'User ID'
+  }
+  const otherNameMapper = {
+    token: 'access token',
+    gistId: 'gist id'
+  }
+  function createLabel (name, text) {
+    return (
       <span>
-        token <QuestionCircleOutlined />
+        {isCustom ? (customNameMapper[name] || name) : name}
+        <HelpIcon link={getTokenCreateGuideUrl()} />
       </span>
-    </Tooltip>
-  )
+    )
+  }
+  function createPlaceHolder (name) {
+    if (syncType === syncTypes.custom) {
+      return customNameMapper[name]
+    }
+    return syncType + ' ' + otherNameMapper[name]
+  }
+  function createId (name) {
+    return 'sync-input-' + name + '-' + syncType
+  }
+  function createUrlItem () {
+    if (syncType === syncTypes.cloud) {
+      return (
+        <p>
+          <Link to='https://electerm-cloud.html5beta.com'>
+            https://electerm-cloud.html5beta.com[Beta]
+          </Link>
+        </p>
+      )
+    }
+    if (syncType !== syncTypes.custom) {
+      return null
+    }
+    return (
+      <FormItem
+        label={createLabel('API Url')}
+        name='apiUrl'
+        rules={[{
+          max: 200, message: '200 chars max'
+        }]}
+      >
+        <Input
+          placeholder='API Url'
+          id='sync-input-url-custom'
+        />
+      </FormItem>
+    )
+  }
+  const desc = syncType === syncTypes.custom
+    ? 'jwt secret'
+    : 'personal access token'
+  const idDesc = syncType === syncTypes.custom
+    ? 'user id'
+    : 'gist ID'
+  const tokenLabel = createLabel('token', desc)
+  const gistLabel = createLabel('gist', idDesc)
+  const syncPasswordName = e('encrypt') + ' ' + e('password')
+  const syncPasswordLabel = createLabel(syncPasswordName, '')
+  function createIdItem () {
+    if (syncType === syncTypes.cloud) {
+      return null
+    }
+    return (
+      <FormItem
+        label={gistLabel}
+        name='gistId'
+        rules={[{
+          max: 100, message: '100 chars max'
+        }]}
+      >
+        <Input
+          placeholder={createPlaceHolder('gistId')}
+          id={createId('gistId')}
+        />
+      </FormItem>
+    )
+  }
+  function createPasswordItem () {
+    if (syncType === syncTypes.cloud) {
+      return null
+    }
+    return (
+      <FormItem
+        label={syncPasswordLabel}
+        hasFeedback
+        name='syncPassword'
+        rules={[{
+          max: 100, message: '100 chars max'
+        }]}
+      >
+        <Input.Password
+          placeholder={syncType + ' ' + syncPasswordName}
+        />
+      </FormItem>
+    )
+  }
+  const sprops = {
+    type: syncType,
+    status: props.serverStatus
+  }
   return (
     <Form
       onFinish={save}
       form={form}
       className='form-wrap pd1x'
-      name='setting-sync-form'
+      name={'setting-sync-form' + syncType}
       layout='vertical'
       initialValues={props.formData}
     >
+      {createUrlItem()}
       <FormItem
         label={tokenLabel}
         hasFeedback
         name='token'
         rules={[{
-          max: 100, message: '100 chars max'
+          max: 1100, message: '1100 chars max'
         }, {
-          required: true, message: syncType + ' access token required'
+          required: true, message: createPlaceHolder('token') + ' required'
         }]}
       >
         <Input.Password
-          placeholder={syncType + ' personal access token'}
+          placeholder={createPlaceHolder('token')}
+          id={createId('token')}
         />
       </FormItem>
-      <FormItem
-        label={s('encrypt')}
-      >
-        <Switch
-          onChange={props.store.onChangeEncrypt}
-          checked={!!props.syncEncrypt}
-        />
-      </FormItem>
-      <FormItem
-        className='sync-control'
-      >
-        <span
-          className='pointer sync-control-link'
-          onClick={showGistForm}
-        >{ss('useExistingGistId')} gist ID</span>
-      </FormItem>
-      <div className={cls}>
-        <FormItem
-          label='gist ID'
-          name='gistId'
-          rules={[{
-            max: 100, message: '100 chars max'
-          }]}
-        >
-          <Input
-            placeholder={syncType + ' gist id'}
-          />
-        </FormItem>
-      </div>
-      {/* <FormItem
-        {...formItemLayout}
-        label={ss('autoSync')}
-      >
-        <Switch
-          checked={autoSync}
-          disabled={this.disabled()}
-          onChange={this.onChangeAutoSync}
-        />
-      </FormItem> */}
+      {
+        createIdItem()
+      }
+      {
+        createPasswordItem()
+      }
       <FormItem>
         <p>
           <Button
-            type='ghost'
-            className='mg1r mg1b'
+            type='dashed'
+            className='mg1r mg1b sync-btn-save'
             htmlType='submit'
             icon={<SaveOutlined />}
-          >{e('save')}</Button>
+          >{e('save')}
+          </Button>
           {/* <Button
-            type='ghost'
+            type='dashed'
             onClick={this.sync}
             disabled={this.disabled()}
             className='mg1r'
             loading={isSyncingSetting}
             icon='swap'
-          >{ss('sync')}</Button> */}
+          >{e('sync')}</Button> */}
           <Button
-            type='ghost'
+            type='dashed'
             onClick={upload}
             disabled={disabled()}
-            className='mg1r mg1b'
+            className='mg1r mg1b sync-btn-up'
             icon={<ArrowUpOutlined />}
-          >{ss('uploadSettings')}</Button>
+          >{e('uploadSettings')}
+          </Button>
           <Button
-            type='ghost'
+            type='dashed'
             onClick={download}
             disabled={disabled()}
-            className='mg1r mg1b'
+            className='mg1r mg1b sync-btn-down'
             icon={<ArrowDownOutlined />}
-          >{ss('downloadSettings')}</Button>
+          >{e('downloadSettings')}
+          </Button>
           <Button
-            type='ghost'
-            onClick={props.store.clearSyncSetting}
+            type='dashed'
+            onClick={window.store.handleClearSyncSetting}
             disabled={disabled()}
-            className='mg1r mg1b'
+            className='mg1r mg1b sync-btn-clear'
             icon={<ClearOutlined />}
-          >{sh('clear')}</Button>
+          >{e('clear')}
+          </Button>
         </p>
+        <ServerDataStatus {...sprops} />
         <p>
           {e('lastSyncTime')}: {timeFormatted}
         </p>

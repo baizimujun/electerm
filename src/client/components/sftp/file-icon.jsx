@@ -5,13 +5,18 @@
 import { getIconForFile, getIconForFolder } from 'vscode-icons-js'
 // import Icon from '@ant-design/icons'
 
-const { extIconPath } = window.pre
 export default function FileIcon ({ file, ...extra }) {
+  const { extIconPath } = window.pre
   const name = file.isDirectory
     ? getIconForFolder(file.name)
     : getIconForFile(file.name)
   // const svg = <img src={iconPath + name} alt='' />
   return (
-    <img src={extIconPath + name} height={12} alt='' {...extra} />
+    <img
+      src={extIconPath + name}
+      height={12}
+      alt=''
+      {...extra}
+    />
   )
 }

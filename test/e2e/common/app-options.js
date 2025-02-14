@@ -1,17 +1,14 @@
-
-const electronPath = require('electron')
 const { resolve } = require('path')
 const cwd = process.cwd()
 
 module.exports = {
-  path: electronPath,
-  webdriverOptions: {
-    deprecationWarnings: false
-  },
   env: {
+    ...process.env,
     NODE_TEST: 'yes'
   },
-  // chromeDriverArgs: ['remote-debugging-port=9222'],
-  chromeDriverLogPath: resolve(cwd, 'spectron-test.log'),
-  args: [resolve(cwd, 'work/app')]
+  args: [
+    resolve(cwd, 'work/app'),
+    '--disable-gpu',
+    '--disable-dev-shm-usage'
+  ]
 }

@@ -2,9 +2,10 @@
  * file info related functions
  */
 
-import { nanoid as generate } from 'nanoid/non-secure'
+import generate from '../../common/uid'
 import fs from '../../common/fs'
-import { isWin } from '../../common/constants'
+import { isWin, typeMap } from '../../common/constants'
+import resolve from '../../common/resolve'
 
 export const getFileExt = fileName => {
   const sep = '.'
@@ -18,7 +19,7 @@ export const getFileExt = fileName => {
   }
   return {
     base: arr.slice(0, len - 1).join(sep),
-    ext: arr[len - 1]
+    ext: arr[len - 1] || ''
   }
 }
 
@@ -33,9 +34,11 @@ export const getFolderFromFilePath = (filePath, isRemote) => {
   const name = isWinDisk
     ? filePath.replace(sep, '')
     : arr[len - 1]
+
   return {
     path,
-    name
+    name,
+    ...getFileExt(name)
   }
 }
 
@@ -76,4 +79,29 @@ export const getRemoteFileInfo = async (sftp, filePath) => {
     id: generate(),
     isDirectory: stat.isDirectory
   }
+}
+
+export async function checkFolderSize (props, f) {
+  const pth = resolve(f.path, f.name)
+  const func = f.type === typeMap.remote
+    ? props.sftp
+    : window.fs
+  const {
+    size,
+    count
+  } = await func.getFolderSize(pth)
+    .catch(err => {
+      console.log('get folder size fail', err)
+      return { size: 0, count: 0 }
+    })
+  if (count === 0) {
+    return true
+  }
+  if (size >= 600) {
+    return false
+  }
+  if (size / count >= 100) {
+    return false
+  }
+  return true
 }

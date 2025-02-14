@@ -12,14 +12,18 @@
   height 1px
   background text-dark
   display none
-
-.type-tab
+.type-tab-txt
   position relative
+  display inline-block
+
+.sftp-follow-ssh-icon
+.type-tab
   display inline-block
   vertical-align middle
   line-height 30px
   color text-dark
-  margin-right 20px
+  padding 0 20px 0 0
+  margin-right 0px
   font-size 14px
   cursor pointer
   &:hover
@@ -28,6 +32,7 @@
   &.active
     .type-tab-line
       display inline-block
+
 .is-transporting
   .type-tab.sftp
     .type-tab-line
@@ -43,3 +48,27 @@
   &:hover
     color text-light
 
+.sessions
+  position absolute
+  background main
+.session-wrap
+  display none
+  position absolute
+  overflow hidden
+  z-index 3
+  padding-top 36px
+  box-shadow 0px 0px 1px 1px alpha(main, .3)
+  &.session-batch-active
+    display block
+
+.web-session-wrap
+  height 100vh
+  background main
+.session-v-wrap
+  background main
+  overflow scroll
+  z-index 99
+.vnc-session-wrap > div
+  display block !important
+  width auto !important
+  height auto !important

@@ -3,7 +3,7 @@
  * run functions in seprate process, avoid using electron.remote directly
  */
 
-const { Terminal: Sftp } = require('./session')
+const { Sftp } = require('./session-sftp')
 const {
   sftp,
   transfer,
@@ -12,7 +12,7 @@ const {
 } = require('./remote-common')
 const { Transfer } = require('./transfer')
 const fs = require('./fs')
-const log = require('../utils/log')
+const log = require('../common/log')
 const { Upgrade } = require('./download-upgrade')
 const fetch = require('./fetch')
 const sync = require('./sync')
@@ -20,13 +20,11 @@ const {
   createTerm,
   testTerm,
   resize,
-  runCmd
+  runCmd,
+  toggleTerminalLog,
+  toggleTerminalLogTimestamp
 } = require('./terminal-api')
-
-global.upgradeInsts = {}
-
-// for remote sessions
-global.sessions = {}
+const globalState = require('./global-state')
 
 const { tokenElecterm } = process.env
 
@@ -54,13 +52,16 @@ const wsDec = (ws) => {
     }
     ws.addEventListener('message', func)
   }
-  ws._socket.setKeepAlive(true, 1 * 60 * 1000)
+  ws._socket.setKeepAlive(true, 30 * 1000)
 }
 
 function verify (req) {
   const { token: to } = req.query
   if (to !== tokenElecterm) {
     throw new Error('not valid request')
+  }
+  if (process.env.requireAuth === 'yes' && !globalState.authed) {
+    throw new Error('auth required')
   }
 }
 
@@ -155,7 +156,7 @@ const initWs = function (app) {
     wsDec(ws)
     const { id } = req.params
     ws.on('close', () => {
-      const inst = global.upgradeInsts[id]
+      const inst = globalState.getUpgradeInst(id)
       if (inst) {
         inst.destroy()
       }
@@ -169,11 +170,12 @@ const initWs = function (app) {
         const opts = Object.assign({}, msg, {
           ws
         })
-        global.upgradeInsts[id] = new Upgrade(opts)
-        await global.upgradeInsts[id].init()
+        const inst = new Upgrade(opts)
+        globalState.setUpgradeInst(id, inst)
+        await inst.init()
       } else if (action === 'upgrade-func') {
         const { id, func, args } = msg
-        global.upgradeInsts[id][func](...args)
+        globalState.getUpgradeInst(id)[func](...args)
       }
     })
   })
@@ -183,22 +185,30 @@ const initWs = function (app) {
     verify(req)
     wsDec(ws)
     ws.on('message', async (message) => {
-      const msg = JSON.parse(message)
-      const { action } = msg
-      if (action === 'fetch') {
-        fetch(ws, msg)
-      } else if (action === 'sync') {
-        sync(ws, msg)
-      } else if (action === 'fs') {
-        fs(ws, msg)
-      } else if (action === 'create-terminal') {
-        createTerm(ws, msg)
-      } else if (action === 'test-terminal') {
-        testTerm(ws, msg)
-      } else if (action === 'resize-terminal') {
-        resize(ws, msg)
-      } else if (action === 'run-cmd') {
-        runCmd(ws, msg)
+      try {
+        const msg = JSON.parse(message)
+        const { action } = msg
+        if (action === 'fetch') {
+          fetch(ws, msg)
+        } else if (action === 'sync') {
+          sync(ws, msg)
+        } else if (action === 'fs') {
+          fs(ws, msg)
+        } else if (action === 'create-terminal') {
+          createTerm(ws, msg)
+        } else if (action === 'test-terminal') {
+          testTerm(ws, msg)
+        } else if (action === 'resize-terminal') {
+          resize(ws, msg)
+        } else if (action === 'toggle-terminal-log') {
+          toggleTerminalLog(ws, msg)
+        } else if (action === 'toggle-terminal-log-timestamp') {
+          toggleTerminalLogTimestamp(ws, msg)
+        } else if (action === 'run-cmd') {
+          runCmd(ws, msg)
+        }
+      } catch (err) {
+        log.error('common ws error', err)
       }
     })
   })

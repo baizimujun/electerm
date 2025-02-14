@@ -10,11 +10,17 @@
   bottom 0
   width 500px
   background main
+  border 1px solid darken(main, 30%)
+  border-radius 5px 0 0 5px
+  border-right none
   color text
-  box-shadow 0px 3px 3px 3px alpha(main, .25)
   z-index 100
   overflow-y scroll
   opacity .9
+  .drag-handle
+    left 0
+    right auto
+    display block
 .terminal-info-section
   padding 10px 0
 .terminal-info-act
@@ -23,7 +29,11 @@
   max-height 260px
   overflow-y scroll
 .activity-item
-  .activity-item-copy
-    display none
-  &:hover .activity-item-copy
-    display inline
+  max-height 1.6em
+  line-height 1.6
+  overflow hidden
+  &:hover
+    max-height none
+.info-panel-wrap-pin
+  .toggle-info-panel-wrap
+    color success

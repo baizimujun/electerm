@@ -4,19 +4,16 @@
  * run every upgrade script one by one
  */
 
-const { packInfo, appPath } = require('../utils/app-props')
+const { packInfo } = require('../common/app-props')
 const { version: packVersion } = packInfo
 const { resolve } = require('path')
 const fs = require('fs')
-const log = require('../utils/log')
+const log = require('../common/log')
 const compare = require('../common/version-compare')
 const { dbAction } = require('../lib/nedb')
 const _ = require('lodash')
 const initData = require('./init-nedb')
-const savePath = resolve(appPath, 'electerm-localstorage.json')
-const { existsSync } = require('fs')
 const { updateDBVersion } = require('./version-upgrade')
-const hasOldJSONDB = existsSync(savePath)
 const emptyVersion = '0.0.0'
 const versionQuery = {
   _id: 'version'
@@ -60,7 +57,7 @@ async function shouldUpgrade () {
   }
   const dbVersion = await getDBVersion()
   log.info('dbVersion', dbVersion)
-  if (!hasOldJSONDB && dbVersion === emptyVersion) {
+  if (dbVersion === emptyVersion) {
     await initData()
     await updateDBVersion(packVersion)
     return false

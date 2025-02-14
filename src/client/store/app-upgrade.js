@@ -2,25 +2,20 @@
  * app upgrade
  */
 
-import { appUpdateCheck } from '../common/constants'
-import copy from 'json-deep-copy'
+import { refsStatic } from '../components/common/ref'
 
-export default store => {
-  store.onCheckUpdate = () => {
-    window.postMessage({
-      action: appUpdateCheck
-    }, '*')
+export default Store => {
+  Store.prototype.onCheckUpdate = (noSkip = true) => {
+    refsStatic.get('upgrade')?.appUpdateCheck(noSkip)
   }
-  store.getProxySetting = () => {
-    const cpConf = copy(store.config)
-    return Object
-      .keys((cpConf))
-      .filter(d => d.toLowerCase().includes('proxy'))
-      .reduce((p, k) => {
-        return {
-          ...p,
-          [k]: cpConf[k]
-        }
-      }, {})
+  Store.prototype.getProxySetting = function () {
+    const {
+      proxy,
+      enableGlobalProxy
+    } = window.store.config
+    if (!enableGlobalProxy) {
+      return ''
+    }
+    return typeof proxy !== 'string' ? '' : proxy
   }
 }

@@ -1,38 +1,42 @@
 const delay = require('./wait')
-const { expect } = require('chai')
-const extendClient = require('./client-extend')
+const { expect } = require('./expect')
 
-module.exports = async (th, client, cmd) => {
-  extendClient(client)
-  async function rightClick () {
-    client.rightClick('.ssh-wrap-show .xterm .xterm-cursor-layer', 20, 20)
-  }
+exports.basicTerminalTest = async (client, cmd) => {
   async function focus () {
-    client.click('.ssh-wrap-show .xterm .xterm-cursor-layer')
+    client.click('.session-current .term-wrap')
   }
   async function selectAll () {
-    await rightClick()
-    await delay(101)
-    await client.click('.context-menu .context-item:nth-child(4)')
-    await delay(101)
+    await client.keyboard.press('Meta+A')
+    await delay(401)
   }
   async function copy () {
     await selectAll()
-    await rightClick()
-    await client.click('.context-menu .context-item')
+    await client.keyboard.press('Meta+C')
+    await delay(401)
   }
   await copy()
-  const text1 = await th.app.electron.clipboard.readText()
-  await delay(101)
+  const text1 = await client.readClipboard()
+  await delay(301)
   await focus()
   await delay(1010)
-  await client.keys([...cmd.split(''), 'Enter'])
+  await client.keyboard.type(cmd)
+  await client.keyboard.press('Enter')
   await delay(1011)
-  await client.rightClick('.ssh-wrap-show .xterm canvas:nth-child(3)', 20, 20)
-
-  await delay(1010)
   await copy()
   await delay(101)
-  const text2 = await th.app.electron.clipboard.readText()
+  const text2 = await client.readClipboard()
   expect(text1.trim().length).lessThan(text2.trim().length)
+}
+
+exports.getTerminalContent = async function (client) {
+  await client.click('.session-current .term-wrap')
+  await delay(300)
+  await client.keyboard.press('Meta+A')
+  await delay(300)
+  await client.keyboard.press('Meta+C')
+  await delay(300)
+  const clipboardText = await client.readClipboard()
+  await client.keyboard.press('Escape')
+  await delay(300)
+  return clipboardText
 }

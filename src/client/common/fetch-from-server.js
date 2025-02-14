@@ -3,28 +3,36 @@
  */
 
 import initWs from './ws'
-import { nanoid as generate } from 'nanoid/non-secure'
+import generate from './uid'
+import { NewPromise } from './promise-timeout'
 
 const id = 's'
 window.et.wsOpened = false
 
-export const init = async () => {
+export const initWsCommon = async () => {
+  if (window.et.wsOpened) {
+    return
+  }
   const ws = await initWs('common', id, undefined, undefined, true)
+  if (!ws) {
+    return
+  }
   window.et.wsOpened = true
   ws.onclose = () => {
     window.et.wsOpened = false
   }
   window.et.commonWs = ws
+  window.store.wsInited = true
 }
 
-window.pre.ipcOnEvent('power-resume', init)
+window.pre.ipcOnEvent('power-resume', initWsCommon)
 
-export default async (data) => {
+const wsFetch = async (data) => {
   if (!window.et.wsOpened) {
-    await init()
+    await initWsCommon()
   }
   const id = generate()
-  return new Promise((resolve, reject) => {
+  return new NewPromise((resolve, reject) => {
     window.et.commonWs.once((arg) => {
       if (arg.error) {
         log.error('fetch error', arg.error)
@@ -38,3 +46,5 @@ export default async (data) => {
     })
   })
 }
+window.wsFetch = wsFetch
+export default wsFetch

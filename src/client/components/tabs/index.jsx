@@ -1,263 +1,484 @@
 /**
  * session tabs component
- * @param {array} props.tabs {id, title}
  */
 
+import { Component } from '../common/component'
 import React from 'react'
-import _ from 'lodash'
-
+import runIdle from '../../common/run-idle'
+import { throttle } from 'lodash-es'
+import TabTitle from './tab-title'
 import {
   CodeFilled,
   DownOutlined,
   LeftOutlined,
-  PlusCircleOutlined,
+  PlusOutlined,
   RightOutlined,
   RightSquareFilled
 } from '@ant-design/icons'
-
-import { Dropdown, Menu, Popover } from 'antd'
+import {
+  SingleIcon,
+  TwoColumnsIcon,
+  ThreeColumnsIcon,
+  TwoRowsIcon,
+  ThreeRowsIcon,
+  Grid2x2Icon,
+  TwoRowsRightIcon,
+  TwoColumnsBottomIcon
+} from '../icons/split-icons'
+import { Dropdown, Popover } from 'antd'
 import Tab from './tab'
 import './tabs.styl'
-import { tabWidth, tabMargin, extraTabWidth, windowControlWidth } from '../../common/constants'
-import createName from '../../common/create-title'
+import {
+  tabWidth,
+  tabMargin,
+  extraTabWidth,
+  windowControlWidth,
+  isMacJs,
+  splitMapDesc
+} from '../../common/constants'
 import WindowControl from './window-control'
 import BookmarksList from '../sidebar/bookmark-select'
+import AppDrag from './app-drag'
+import NoSession from './no-session'
+import classNames from 'classnames'
 
-const { prefix } = window
-const e = prefix('tabs')
-const c = prefix('control')
-const t = prefix('tabs')
-const MenuItem = Menu.Item
+const e = window.translate
 
-export default class Tabs extends React.Component {
+export default class Tabs extends Component {
+  constructor (props) {
+    super(props)
+    this.tabsRef = React.createRef()
+    this.domRef = React.createRef()
+    this.state = {
+      overflow: false
+    }
+  }
+
   componentDidMount () {
-    this.dom = document.querySelector('.tabs-inner')
-    window.addEventListener('keydown', this.handleTabHotkey)
+    const {
+      tabsRef
+    } = this
+    tabsRef.current.addEventListener('wheel', this.handleWheelEvent, {
+      passive: false
+    })
   }
 
   componentDidUpdate (prevProps) {
-    prevProps = prevProps || {}
     if (
-      prevProps.currentTabId !== this.props.currentTabId ||
+      prevProps.currentBatchTabId !== this.props.currentBatchTabId ||
       prevProps.width !== this.props.width ||
-      prevProps.tabs.map(d => d.title).join('#') !== this.props.tabs.map(d => d.title).join('#')
+      (prevProps.tabs || []).length !== (this.props.tabs || []).length
     ) {
       this.adjustScroll()
     }
   }
 
   componentWillUnmount () {
-    window.removeEventListener('keydown', this.handleTabHotkey)
+  }
+
+  modifier = (...args) => {
+    runIdle(() => this.setState(...args))
+  }
+
+  handleNewTab = () => {
+    window.store.addTab(undefined, undefined, this.props.batch)
+  }
+
+  handleNewSsh = () => {
+    window.store.onNewSsh()
   }
 
   tabsWidth = () => {
+    const { batch } = this.props
     return Array.from(
-      document.querySelectorAll('.tab')
+      document.querySelectorAll(`.v${batch + 1} .tab`)
     ).reduce((prev, c) => {
       return prev + c.clientWidth
     }, 0)
   }
 
   isOverflow = () => {
-    const { tabs = [], width } = this.props
+    const { tabs = [] } = this.props
     const len = tabs.length
     const addBtnWidth = 22
-    const tabsWidth = this.tabsWidth()
-    const tabsWidthAll = tabMargin * len + 130 + tabsWidth
-    return width < (tabsWidthAll + addBtnWidth)
+    const tabsWidth = this.tabsWidth() + tabMargin * len + addBtnWidth
+    const tabsInnerWidth = this.getInnerWidth()
+    return tabsWidth > tabsInnerWidth
   }
 
-  handleTabHotkey = e => {
-    if (
-      e.ctrlKey &&
-      e.code === 'Tab' &&
-      e.shiftKey
-    ) {
-      this.props.store.clickNextTab()
-    }
+  getInnerWidth = () => {
+    const { batch } = this.props
+    const cls = `.v${batch + 1} .tabs-inner`
+    const inner = document.querySelector(cls)
+    return inner ? inner.clientWidth : 0
   }
 
-  onAdd = e => {
+  handleAdd = e => {
     if (!e.target.className.includes('tabs-wrapper')) {
       return
     }
-    this.props.store.addTab()
+    window.store.addTab(
+      undefined, undefined,
+      this.props.batch
+    )
+  }
+
+  handleTabAdd = () => {
+    window.store.addTab(
+      undefined, undefined,
+      this.props.batch
+    )
   }
 
   adjustScroll = () => {
-    const { width, tabs, currentTabId } = this.props
-    const index = _.findIndex(tabs, t => t.id === currentTabId)
+    const { tabs, currentBatchTabId, batch } = this.props
+    const index = tabs.findIndex(t => t.id === currentBatchTabId)
     const tabsDomWith = Array.from(
-      document.querySelectorAll('.tab')
+      document.querySelectorAll(`.v${batch + 1} .tab`)
     ).slice(0, index + 2).reduce((prev, c) => {
       return prev + c.clientWidth
     }, 0)
-    const w = (index + 1) * tabMargin + 5 + tabsDomWith
-    const scrollLeft = w > width - extraTabWidth
-      ? w - width + extraTabWidth
+    const w = (index + 1) * tabMargin + tabsDomWith
+    const tabsInnerWidth = this.getInnerWidth()
+    const scrollLeft = w > tabsInnerWidth
+      ? w - tabsInnerWidth
       : 0
-    this.dom.scrollLeft = scrollLeft
+    this.domRef.current.scrollTo({ left: scrollLeft, behavior: 'smooth' })
+    this.setState({
+      overflow: this.isOverflow()
+    })
   }
 
-  scrollLeft = () => {
-    let { scrollLeft } = this.dom
+  handleScrollLeft = () => {
+    let { scrollLeft } = this.domRef.current
     scrollLeft = scrollLeft - tabMargin - tabWidth
     if (scrollLeft < 0) {
       scrollLeft = 0
     }
-    this.dom.scrollLeft = scrollLeft
+    this.domRef.current.scrollTo({ left: scrollLeft, behavior: 'smooth' })
   }
 
-  scrollRight = () => {
-    let { scrollLeft } = this.dom
+  handleScrollRight = () => {
+    let { scrollLeft } = this.domRef.current
     scrollLeft = scrollLeft + tabMargin + tabWidth
     if (scrollLeft < 0) {
       scrollLeft = 0
     }
-    this.dom.scrollLeft = scrollLeft
+    this.domRef.current.scrollTo({ left: scrollLeft, behavior: 'smooth' })
   }
 
-  onClickMenu = ({ key }) => {
+  handleWheelEvent = throttle((e) => {
+    if (this.isOverflow()) {
+      if (e.deltaY < 0) {
+        this.handleScrollLeft()
+      } else {
+        this.handleScrollRight()
+      }
+    }
+  }, 100, { leading: true, trailing: true })
+
+  handleClickMenu = ({ key }) => {
     const id = key.split('##')[1]
-    this.props.store.onChangeTabId(id)
+    window.store['activeTabId' + this.props.batch] = id
   }
 
-  renderList = () => {
-    const { tabs = [] } = this.props
-    return (
-      <Menu onClick={this.onClickMenu}>
-        {
-          tabs.map((t, i) => {
-            return (
-              <MenuItem
-                key={i + '##' + t.id}
-              >{createName(t)}
-              </MenuItem>
-            )
-          })
-        }
-      </Menu>
-    )
+  handleChangeLayout = ({ key }) => {
+    window.store.setLayout(key)
+  }
+
+  handleOpenChange = (open) => {
+    if (open) {
+      window.openTabBatch = this.props.batch
+    }
   }
 
   renderMenus () {
-    const { onNewSsh, addTab } = this.props.store
+    const { onNewSsh } = window.store
     const cls = 'pd2x pd1y context-item pointer'
     return (
-      <div className='add-menu-wrap' style={{
-        maxHeight: window.innerHeight - 200
-      }}>
+      <div
+        className='add-menu-wrap' style={{
+          maxHeight: window.innerHeight - 200
+        }}
+      >
         <div
           className={cls}
           onClick={onNewSsh}
         >
-          <CodeFilled /> {c('newSsh')}
+          <CodeFilled /> {e('newBookmark')}
         </div>
         <div
           className={cls}
-          onClick={() => addTab()}
+          onClick={this.handleTabAdd}
         >
-          <RightSquareFilled /> {t('newTab')}
+          <RightSquareFilled /> {e('newTab')}
         </div>
         <BookmarksList
-          store={this.props.store}
+          store={window.store}
         />
       </div>
     )
   }
 
   renderAddBtn = () => {
+    const cls = classNames(
+      'pointer tabs-add-btn font16',
+      {
+        empty: !this.props.tabs?.length
+      }
+    )
     return (
       <Popover
         content={this.renderMenus()}
+        onOpenChange={this.handleOpenChange}
+        placement='bottomRight'
       >
-        <PlusCircleOutlined
+        <PlusOutlined
           title={e('openNewTerm')}
-          className='pointer tabs-add-btn font16'
-          onClick={() => this.props.store.addTab()} />
+          className={cls}
+          onClick={this.handleTabAdd}
+        />
       </Popover>
     )
   }
 
+  renderNoExtra () {
+    return (
+      <div className='tabs-extra pd1x'>
+        {this.renderLayoutMenu()}
+      </div>
+    )
+  }
+
   renderExtra () {
+    const items = this.props.tabs.map((t, i) => {
+      return {
+        key: i + '##' + t.id,
+        label: (
+          <span><TabTitle tab={t} /></span>
+        ),
+        onClick: () => this.handleClickMenu({ key: i + '##' + t.id })
+      }
+    })
+    const dropProps = {
+      className: 'tabs-add-btn font16',
+      menu: {
+        items
+      },
+      placement: 'bottomRight'
+    }
     return (
       <div className='tabs-extra pd1x'>
         {this.renderAddBtn()}
         <LeftOutlined
           className='mg1l iblock pointer font12 tab-scroll-icon'
-          onClick={this.scrollLeft} />
+          onClick={this.handleScrollLeft}
+        />
         <RightOutlined
           className='mg1x iblock pointer font12 tab-scroll-icon'
-          onClick={this.scrollRight} />
+          onClick={this.handleScrollRight}
+        />
         <Dropdown
-          className='iblock'
-          placement='bottomRight'
-          overlay={this.renderList()}
+          {...dropProps}
         >
           <DownOutlined className='tabs-dd-icon' />
         </Dropdown>
+        {
+          this.renderLayoutMenu()
+        }
       </div>
     )
   }
 
-  render () {
-    const { tabs = [], width } = this.props
+  renderContent () {
+    const { config } = this.props
+    if (config.useSystemTitleBar) {
+      return this.renderContentInner()
+    }
+    return (
+      <AppDrag>
+        {this.renderContentInner()}
+      </AppDrag>
+    )
+  }
+
+  renderContentInner () {
+    const { tabs = [], width, config } = this.props
     const len = tabs.length
     const tabsWidthAll = tabMargin * len + 10 + this.tabsWidth()
-    const overflow = this.isOverflow()
+    const { overflow } = this.state
     const left = overflow
       ? '100%'
       : tabsWidthAll
+    const w1 = isMacJs && (config.useSystemTitleBar || window.et.isWebApp)
+      ? 30
+      : this.getExtraTabWidth()
     const style = {
-      width: width - windowControlWidth
+      width: width - w1 - 166
     }
     return (
-      <div className='tabs noise'>
+      <div
+        className='tabs-inner'
+        ref={this.domRef}
+        style={style}
+      >
         <div
-          className='tabs-inner'
-          style={style}
-        >
-          <div
-            style={{
-              left
-            }}
-          />
-          <div
-            className='tabs-wrapper relative'
-            style={{
-              width: tabsWidthAll + extraTabWidth + 10
-            }}
-            onDoubleClick={this.onAdd}
-          >
-            {
-              tabs.map((tab) => {
-                return (
-                  <Tab
-                    {...this.props}
-                    tab={tab}
-                    key={tab.id}
-                  />
-                )
-              })
-            }
-            {
-              !overflow
-                ? this.renderAddBtn()
-                : null
-            }
-          </div>
-        </div>
-        <div className='app-drag' />
-        <WindowControl
-          isMaximized={this.props.isMaximized}
-          closeApp={this.props.store.exit}
+          style={{
+            left
+          }}
         />
+        <div
+          className='tabs-wrapper relative'
+          style={{
+            width: tabsWidthAll + extraTabWidth + 10
+          }}
+          onDoubleClick={this.handleAdd}
+        >
+          {
+            tabs.map((tab, i) => {
+              const isLast = i === len - 1
+              const tabProps = {
+                ...this.props,
+                tab,
+                isLast,
+                addTab: this.handleTabAdd,
+                tabIndex: i
+              }
+              return (
+                <Tab
+                  {...tabProps}
+                  key={tab.id}
+                />
+              )
+            })
+          }
+          {
+            overflow
+              ? null
+              : this.renderAddBtn()
+          }
+        </div>
+      </div>
+    )
+  }
+
+  getLayoutIcon = (layout) => {
+    const iconMaps = {
+      single: SingleIcon,
+      twoColumns: TwoColumnsIcon,
+      threeColumns: ThreeColumnsIcon,
+      twoRows: TwoRowsIcon,
+      threeRows: ThreeRowsIcon,
+      grid2x2: Grid2x2Icon,
+      twoRowsRight: TwoRowsRightIcon,
+      twoColumnsBottom: TwoColumnsBottomIcon
+    }
+    return iconMaps[layout]
+  }
+
+  renderLayoutMenu = () => {
+    if (!this.shouldRenderWindowControl()) {
+      return null
+    }
+    const items = Object.keys(splitMapDesc).map((t) => {
+      const v = splitMapDesc[t]
+      const Icon = this.getLayoutIcon(v)
+      return {
+        key: t,
+        label: (
+          <span>
+            <Icon /> {e(v)}
+          </span>
+        ),
+        onClick: () => this.handleChangeLayout({ key: t })
+      }
+    })
+    const v = splitMapDesc[this.props.layout]
+    const Icon = this.getLayoutIcon(v)
+    return (
+      <Dropdown
+        menu={{ items }}
+        placement='bottomRight'
+      >
+        <span className='tabs-dd-icon layout-dd-icon mg1l'>
+          <Icon /> <DownOutlined />
+        </span>
+      </Dropdown>
+    )
+  }
+
+  shouldRenderWindowControl = () => {
+    const { layout, batch } = this.props
+    const batchToRender = {
+      c1: 0,
+      c2: 1,
+      c3: 2,
+      r2: 0,
+      r3: 0,
+      c2x2: 1,
+      c1r2: 1,
+      r1c2: 0
+    }
+    return batch === batchToRender[layout]
+  }
+
+  getExtraTabWidth = () => {
+    return this.shouldRenderWindowControl()
+      ? windowControlWidth
+      : 0
+  }
+
+  renderWindowControl = () => {
+    if (this.shouldRenderWindowControl()) {
+      return (
+        <WindowControl
+          store={window.store}
+        />
+      )
+    }
+    return null
+  }
+
+  renderTabs () {
+    const { overflow } = this.state
+    return (
+      <div className='tabs' ref={this.tabsRef}>
+        {this.renderContent()}
+        {
+          this.renderWindowControl()
+        }
         {
           overflow
             ? this.renderExtra()
-            : null
+            : this.renderNoExtra()
         }
       </div>
     )
+  }
+
+  renderNoSession = () => {
+    return (
+      <NoSession
+        height={this.props.height}
+        onNewTab={this.handleNewTab}
+        onNewSsh={this.handleNewSsh}
+        batch={this.props.batch}
+      />
+    )
+  }
+
+  render () {
+    const {
+      tabs
+    } = this.props
+    if (!tabs || !tabs.length) {
+      return (
+        <div className='tabs-outer'>
+          {this.renderTabs()}
+          {this.renderNoSession()}
+        </div>
+      )
+    }
+    return this.renderTabs()
   }
 }

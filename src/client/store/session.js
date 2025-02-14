@@ -2,32 +2,15 @@
  * sessions not proper closed related functions
  */
 
-import { getData } from '../common/db'
-import copy from 'json-deep-copy'
+import { debounce } from 'lodash-es'
+import { refs } from '../components/common/ref'
 
-export default store => {
-  Object.assign(store, {
-    async checkLastSession () {
-      const status = await window.pre.runGlobalAsync('getExitStatus')
-      if (status === 'ok') {
-        return
-      }
-      const sessionsGlob = await getData('sessions')
-      store.showLastSessions(sessionsGlob)
-    },
-
-    showLastSessions (sessions) {
-      if (!sessions) {
-        return
-      }
-      store.storeAssign({
-        selectedSessions: copy(sessions).map(s => ({
-          id: s.id,
-          tab: s,
-          checked: true
-        })),
-        sessionModalVisible: true
-      })
+export default Store => {
+  Store.prototype.zoomTerminal = debounce(function (delta) {
+    const term = refs.get('term-' + window.store.activeTabId)
+    if (!term) {
+      return
     }
-  })
+    term.zoom(delta > 0 ? 1 : -1)
+  }, 500)
 }

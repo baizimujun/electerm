@@ -6,22 +6,27 @@ const {
   Menu,
   shell
 } = require('electron')
-const { packInfo } = require('../utils/constants')
+const openNewInstance = require('./open-new-instance')
+const { packInfo } = require('../common/runtime-constants')
+const globalState = require('./glob-state')
 
-function buildMenu (prefix) {
-  const e = prefix('menu')
-  const c = prefix('control')
-  const s = prefix('setting')
+function buildMenu () {
+  const e = globalState.get('translate')
 
   const template = [
     {
       label: e('edit'),
       submenu: [
         {
-          label: c('newSsh'),
-          accelerator: 'CmdOrCtrl+N',
+          label: e('newBookmark'),
           click () {
-            global.win.webContents.send('new-ssh', null)
+            globalState.get('win').webContents.send('new-ssh', null)
+          }
+        },
+        {
+          label: e('newWindow'),
+          click () {
+            openNewInstance()
           }
         },
         {
@@ -61,16 +66,16 @@ function buildMenu (prefix) {
           label: e('selectall'),
           accelerator: 'CmdOrCtrl+A',
           click () {
-            global.win.webContents.send('selectall', null)
+            globalState.get('win').webContents.send('selectall', null)
           }
         },
         {
           type: 'separator'
         },
         {
-          label: s('settings'),
+          label: e('settings'),
           click () {
-            global.win.webContents.send('openSettings', null)
+            globalState.get('win').webContents.send('openSettings', null)
           }
         }
       ]
@@ -90,15 +95,21 @@ function buildMenu (prefix) {
           type: 'separator'
         },
         {
-          role: 'resetzoom',
+          click () {
+            globalState.get('win').webContents.send('zoom-reset', null)
+          },
           label: e('resetzoom')
         },
         {
-          role: 'zoomin',
+          click () {
+            globalState.get('win').webContents.send('zoomin', null)
+          },
           label: e('zoomin')
         },
         {
-          role: 'zoomout',
+          click () {
+            globalState.get('win').webContents.send('zoomout', null)
+          },
           label: e('zoomout')
         },
         {
@@ -121,13 +132,13 @@ function buildMenu (prefix) {
         {
           label: e('maximize'),
           click () {
-            global.win.maximize()
+            globalState.get('win').maximize()
           }
         },
         {
           label: e('restart'),
           click () {
-            global.win.close()
+            globalState.get('win').close()
             app.relaunch()
           }
         }
@@ -140,13 +151,13 @@ function buildMenu (prefix) {
         {
           label: e('about'),
           click () {
-            global.win.webContents.send('open-about', null)
+            globalState.get('win').webContents.send('open-about', null)
           }
         },
         {
           label: e('checkUpdate'),
           click () {
-            global.win.webContents.send('checkupdate', null)
+            globalState.get('win').webContents.send('checkupdate', null)
           }
         },
         {
@@ -173,7 +184,7 @@ function buildMenu (prefix) {
         {
           label: e('toggledevtools'),
           click () {
-            global.win.webContents.openDevTools()
+            globalState.get('win').webContents.openDevTools()
           }
         }
       ]

@@ -3,31 +3,14 @@
  */
 
 import React from 'react'
-import ReactDOM from 'react-dom'
 import ExtIcon from './file-icon'
 import {
   FolderOutlined,
-  FileOutlined,
-  CloudDownloadOutlined,
-  CloudUploadOutlined,
-  ArrowRightOutlined,
-  CheckSquareOutlined,
-  CloseCircleOutlined,
-  ContainerOutlined,
-  CopyOutlined,
-  EditOutlined,
-  EnterOutlined,
-  FileAddOutlined,
-  FileExcelOutlined,
-  FolderAddOutlined,
-  InfoCircleOutlined,
-  LockOutlined,
-  ReloadOutlined
+  FileOutlined
 } from '@ant-design/icons'
-import { Popconfirm } from 'antd'
 import classnames from 'classnames'
 import copy from 'json-deep-copy'
-import _ from 'lodash'
+import { pick, some } from 'lodash-es'
 import Input from '../common/input-auto-focus'
 import resolve from '../../common/resolve'
 import { addClass, removeClass } from '../../common/class'
@@ -43,24 +26,20 @@ import {
 } from '../../common/constants'
 import findParent from '../../common/find-parent'
 import sorter from '../../common/index-sorter'
-import { getFolderFromFilePath } from './file-read'
+import { getFolderFromFilePath, getLocalFileInfo, checkFolderSize } from './file-read'
 import { readClipboard, copy as copyToClipboard, hasFileInClipboardText } from '../../common/clipboard'
 import fs from '../../common/fs'
-import time from '../../../app/common/time'
-import filesize from 'filesize'
-import { nanoid as generate } from 'nanoid/non-secure'
+import time from '../../common/time'
+import { filesize } from 'filesize'
+import { createTransferProps } from './transfer-common'
+import generate from '../../common/uid'
+import { refsStatic, refs } from '../common/ref'
+import iconsMap from '../sys-menu/icons-map'
+import {
+  Dropdown
+} from 'antd'
 
-const { prefix } = window
-const e = prefix('sftp')
-const m = prefix('menu')
-const c = prefix('common')
-
-const computePos = (e) => {
-  return {
-    left: e.clientX,
-    top: e.clientY
-  }
-}
+const e = window.translate
 
 const fileItemCls = 'sftp-item'
 const onDragCls = 'sftp-ondrag'
@@ -74,10 +53,13 @@ export default class FileSection extends React.Component {
       file: copy(props.file),
       overwriteStrategy: ''
     }
+    // Create ref
+    this.domRef = React.createRef()
   }
 
   componentDidMount () {
-    this.dom = ReactDOM.findDOMNode(this)
+    this.id = 'file-' + (this.props.file?.id || generate())
+    refs.add(this.id, this)
     this.applyStyle()
   }
 
@@ -90,7 +72,23 @@ export default class FileSection extends React.Component {
     }
   }
 
+  componentWillUnmount () {
+    refsStatic.remove(this.id)
+    clearTimeout(this.timer)
+    this.timer = null
+    this.domRef = null
+    this.dropTarget = null
+    this.removeFileEditEvent()
+  }
+
+  get editor () {
+    return refsStatic.get('text-editor')
+  }
+
   applyStyle = () => {
+    if (!this.domRef) {
+      return
+    }
     const {
       id,
       type
@@ -98,16 +96,16 @@ export default class FileSection extends React.Component {
     const headers = document.querySelectorAll(
       `#id-${id} .${type} .sftp-file-table-header .sftp-header-box`
     )
-    this.dom.querySelectorAll('.sftp-file-prop').forEach((n, i) => {
+    this.domRef.current?.querySelectorAll('.sftp-file-prop').forEach((n, i) => {
       const h = headers[i]
       if (h) {
-        const s = _.pick(h.style, ['width', 'left'])
+        const s = pick(h.style, ['width', 'left'])
         Object.assign(n.style, s)
       }
     })
   }
 
-  onCopy = (e, targetFiles, isCut) => {
+  onCopy = (targetFiles, isCut) => {
     const { file } = this.state
     const selected = this.isSelected(file)
     const files = targetFiles ||
@@ -123,13 +121,26 @@ export default class FileSection extends React.Component {
       return prefix + resolve(f.path, f.name)
     }).join('\n')
     copyToClipboard(textToCopy)
-    this.props.modifier({
-      fileOperation: isCut ? fileOperationsMap.mv : fileOperationsMap.cp
-    })
+    window.store.fileOperation = isCut ? fileOperationsMap.mv : fileOperationsMap.cp
   }
 
-  onCut = (e, targetFiles) => {
-    this.onCopy(e, targetFiles, true)
+  onCopyPath = (targetFiles) => {
+    const { file } = this.state
+    const selected = this.isSelected(file)
+    const files = targetFiles ||
+      (
+        selected
+          ? this.props.selectedFiles
+          : [file]
+      )
+    const textToCopy = files.map(f => {
+      return resolve(f.path, f.name)
+    }).join('\n')
+    copyToClipboard(textToCopy)
+  }
+
+  onCut = (targetFiles) => {
+    this.onCopy(targetFiles, true)
   }
 
   getTransferType = fileType => {
@@ -144,7 +155,7 @@ export default class FileSection extends React.Component {
     const clickBoardText = readClipboard()
     const fileNames = clickBoardText.split('\n')
     const res = []
-    const operation = this.props.fileOperation
+    const operation = this.props.fileOperation || fileOperationsMap.cp
     for (let i = 0, len = fileNames.length; i < len; i++) {
       const item = fileNames[i]
       const isRemote = item.startsWith('remote:')
@@ -159,6 +170,8 @@ export default class FileSection extends React.Component {
         fromPath,
         toPath,
         id: generate(),
+        host: this.props.tab?.host,
+        ...createTransferProps(this.props),
         operation
       })
     }
@@ -199,7 +212,7 @@ export default class FileSection extends React.Component {
     const cls = this.props.selectedFiles.length > 1
       ? onDragCls + ' ' + onMultiDragCls
       : onDragCls
-    addClass(this.dom, cls)
+    addClass(this.domRef.current, cls)
     e.dataTransfer.setData('fromFile', JSON.stringify(this.props.file))
   }
 
@@ -228,7 +241,7 @@ export default class FileSection extends React.Component {
 
   onDrop = async e => {
     e.preventDefault()
-    const fromFileManager = !!_.get(e, 'dataTransfer.files.length')
+    const fromFileManager = !!e?.dataTransfer?.files?.length
     let { target } = e
     if (!target) {
       return
@@ -245,7 +258,7 @@ export default class FileSection extends React.Component {
     if (!type) {
       return
     }
-    let toFile = this.props[type + 'FileTree'][id] || {}
+    let toFile = this.props[type + 'FileTree'].get(id) || {}
     if (!toFile.id || !toFile.isDirectory) {
       toFile = {
         type,
@@ -260,7 +273,7 @@ export default class FileSection extends React.Component {
     this.props.modifier({
       onDrag: false
     })
-    removeClass(this.dom, onDragCls, onMultiDragCls)
+    removeClass(this.domRef.current, onDragCls, onMultiDragCls)
     document.querySelectorAll('.' + onDragOverCls).forEach((d) => {
       removeClass(d, onDragOverCls)
     })
@@ -268,7 +281,7 @@ export default class FileSection extends React.Component {
       const dt = e.dataTransfer
       if (dt.items) {
         // Use DataTransferItemList interface to remove the drag data
-        for (var i = 0, len = dt.items.length; i < len; i++) {
+        for (let i = 0, len = dt.items.length; i < len; i++) {
           dt.items.remove(i)
         }
       }
@@ -276,7 +289,7 @@ export default class FileSection extends React.Component {
     }
   }
 
-  onDropFile = (fromFiles, toFile, fromFileManager) => {
+  onDropFile = async (fromFiles, toFile, fromFileManager) => {
     const { type: fromType } = fromFiles[0]
     const {
       id,
@@ -285,7 +298,6 @@ export default class FileSection extends React.Component {
     } = toFile
 
     let operation = ''
-
     // same side and drop to file = drop to folder
     if (!fromFileManager && fromType === toType && !isDirectoryTo) {
       return
@@ -311,7 +323,25 @@ export default class FileSection extends React.Component {
     }
 
     // other side, do transfer
-    this.transferDrop(fromFiles, toFile, operation)
+    let files = fromFiles
+    if (fromFileManager) {
+      files = await this.filterFiles(fromFiles)
+    }
+    this.transferDrop(files, toFile, operation)
+  }
+
+  filterFiles = async (files) => {
+    const res = []
+    for (const file of files) {
+      const { name, path } = file
+      const info = await getLocalFileInfo(
+        resolve(path, name)
+      )
+      if (info) {
+        res.push(info)
+      }
+    }
+    return res
   }
 
   transferDrop = (fromFiles, toFile, operation) => {
@@ -328,7 +358,7 @@ export default class FileSection extends React.Component {
   }
 
   isSelected = file => {
-    return _.some(
+    return some(
       this.props.selectedFiles,
       f => f.id === file.id
     )
@@ -350,29 +380,16 @@ export default class FileSection extends React.Component {
     this.openFileModeModal(this.state.file)
   }
 
-  onCloseFileMode = () => {
-    this.props.store.storeAssign({
-      fileModeModalProps: {}
-    })
-  }
-
-  onCloseFileInfo = () => {
-    this.props.store.storeAssign({
-      fileInfoModalProps: {}
-    })
-  }
-
   showInfo = () => {
     const { type } = this.props
-    this.props.store.storeAssign({
-      fileInfoModalProps: {
-        file: this.state.file,
-        tab: this.props.tab,
-        visible: true,
-        uidTree: this.props[`${type}UidTree`],
-        gidTree: this.props[`${type}GidTree`],
-        onClose: this.onCloseFileInfo
-      }
+    refsStatic.get('file-modal')?.showFileInfoModal({
+      file: this.state.file,
+      tab: this.props.tab,
+      visible: true,
+      pid: this.props.pid,
+      sessionId: this.props.sessionId,
+      uidTree: this.props[`${type}UidTree`],
+      gidTree: this.props[`${type}GidTree`]
     })
   }
 
@@ -389,11 +406,11 @@ export default class FileSection extends React.Component {
     const { localPath } = this.props
     const p = resolve(localPath, nameTemp)
     const func = isDirectory
-      ? fs.mkdirAsync
+      ? fs.mkdir
       : fs.touch
     const res = await func(p)
       .then(() => true)
-      .catch(this.props.store.onError)
+      .catch(window.store.onError)
     if (res) {
       this.props.localList()
     }
@@ -408,7 +425,7 @@ export default class FileSection extends React.Component {
       : sftp.touch
     const res = await func(p)
       .then(() => true)
-      .catch(this.props.store.onError)
+      .catch(window.store.onError)
     if (res) {
       await wait(500)
       await this.props.remoteList()
@@ -447,8 +464,12 @@ export default class FileSection extends React.Component {
     const { file } = this.state
     const {
       id,
-      type
+      type,
+      isParent
     } = file
+    if (isParent) {
+      return
+    }
     this.props.modifier({
       lastClickedFile: file
     })
@@ -469,16 +490,16 @@ export default class FileSection extends React.Component {
         (e.ctrlKey && !isMac) ||
         (e.metaKey && isMac)
       ) {
-        const isSelected = _.some(
+        const isSelected = some(
           selectedFilesOld,
           s => s.id === id
         )
         selectedFiles = isSelected
           ? selectedFilesOld.filter(s => s.id !== id)
           : [
-            ...copy(selectedFilesOld),
-            file
-          ]
+              ...copy(selectedFilesOld),
+              file
+            ]
       } else if (e.shiftKey) {
         selectedFiles = this.getShiftSelected(file, type)
       }
@@ -489,33 +510,31 @@ export default class FileSection extends React.Component {
     })
   }
 
-  changeFileMode = async file => {
-    this.onCloseFileMode()
+  changeFileMode = async (file) => {
     const { permission, type, path, name } = file
     const func = type === typeMap.local
-      ? fs.chmodAsync
+      ? fs.chmod
       : this.props.sftp.chmod
     const p = resolve(path, name)
-    await func(p, permission).catch(this.props.store.onError)
+    await func(p, permission).catch(window.store.onError)
     this.props[type + 'List']()
   }
 
   openFileModeModal = () => {
     const { type } = this.props
-    this.props.store.storeAssign({
-      fileModeModalProps: {
-        file: this.state.file,
+    refsStatic.get('file-modal')?.showFileModeModal(
+      {
         tab: this.props.tab,
         visible: true,
-        onClose: this.onCloseFileMode,
-        changeFileMode: this.changeFileMode,
         uidTree: this.props[`${type}UidTree`],
         gidTree: this.props[`${type}GidTree`]
-      }
-    })
+      },
+      this.state.file,
+      this.id
+    )
   }
 
-  onBlur = () => {
+  handleBlur = () => {
     const file = copy(this.state.file)
     const { nameTemp, name, id, type } = this.state.file
     if (name === nameTemp) {
@@ -543,7 +562,7 @@ export default class FileSection extends React.Component {
     const { localPath } = this.props
     const p1 = resolve(localPath, oldname)
     const p2 = resolve(localPath, newname)
-    await fs.renameAsync(p1, p2).catch(this.props.store.onError)
+    await fs.rename(p1, p2).catch(window.store.onError)
     this.props.localList()
   }
 
@@ -552,14 +571,14 @@ export default class FileSection extends React.Component {
     const p1 = resolve(remotePath, oldname)
     const p2 = resolve(remotePath, newname)
     const res = await sftp.rename(p1, p2)
-      .catch(this.props.store.onError)
+      .catch(window.store.onError)
       .then(() => true)
     if (res) {
       this.props.remoteList()
     }
   }
 
-  onChange = e => {
+  handleChange = e => {
     const nameTemp = e.target.value
     const file = copy(this.state.file)
     file.nameTemp = nameTemp
@@ -568,11 +587,11 @@ export default class FileSection extends React.Component {
     })
   }
 
-  enterDirectory = (e, file) => {
-    e.stopPropagation()
-    const { type, name } = file || this.state.file
+  enterDirectory = (e, file = this.state.file) => {
+    e && e.stopPropagation && e.stopPropagation()
+    const { type, name, isParent } = file
     const n = `${type}Path`
-    const path = this.props[n]
+    const path = isParent ? file.path : this.props[n]
     const np = resolve(path, name)
     const op = this.props[type + 'Path']
     this.props.modifier({
@@ -588,77 +607,175 @@ export default class FileSection extends React.Component {
   openFile = file => {
     const filePath = resolve(file.path, file.name)
     fs.openFile(filePath)
-      .catch(this.props.store.onError)
+      .catch(window.store.onError)
+  }
+
+  removeFileEditEvent = () => {
+    if (this.watchingFile) {
+      window.pre.ipcOffEvent('file-change', this.onFileChange)
+      window.pre.runGlobalAsync('unwatchFile', this.watchingFile)
+      delete this.watchingFile
+    }
+  }
+
+  editWithSystemEditor = async (text) => {
+    const {
+      path,
+      name,
+      type
+    } = this.state.file
+    let tempPath = ''
+    if (type === typeMap.local) {
+      tempPath = window.pre.resolve(path, name)
+    } else {
+      const id = generate()
+      tempPath = window.pre.resolve(
+        window.pre.tempDir, `electerm-temp-${id}-${name}`
+      )
+      await fs.writeFile(tempPath, text)
+    }
+    this.watchingFile = tempPath
+    this.watchFile(tempPath)
+  }
+
+  onFileChange = (e, text) => {
+    this.editor.editWithSystemEditorDone({
+      id: this.id,
+      text
+    })
+  }
+
+  watchFile = async (tempPath) => {
+    window.pre.runGlobalAsync('watchFile', tempPath)
+    fs.openFile(tempPath)
+      .catch(window.store.onError)
+    window.pre.showItemInFolder(tempPath)
+    window.pre.ipcOnEvent('file-change', this.onFileChange)
+  }
+
+  gotoFolderInTerminal = () => {
+    const {
+      path, name
+    } = this.state.file
+    const rp = resolve(path, name)
+    ;(
+      document.querySelector('.session-current .term-sftp-tabs .type-tab.terminal') ||
+      document.querySelector('.session-current .term-sftp-tabs .type-tab.ssh')
+    ).click()
+    this.timer = setTimeout(() => {
+      window.store.runQuickCommand(
+        `cd "${rp}"`
+      )
+    }, 500)
+  }
+
+  fetchEditorText = async (path, type) => {
+    // const sftp = sftpFunc()
+    const text = typeMap.remote === type
+      ? await this.props.sftp.readFile(path)
+      : await fs.readFile(path)
+    return text
+  }
+
+  onSubmitEditFile = async (mode, type, path, text, noClose) => {
+    const r = typeMap.remote === type
+      ? await this.props.sftp.writeFile(
+        path,
+        text,
+        mode
+      ).catch(window.store.onError)
+      : await fs.writeFile(
+        path,
+        text,
+        mode
+      ).catch(window.store.onError)
+    const data = {
+      loading: false
+    }
+    if (r && !noClose) {
+      data.id = ''
+      data.file = null
+      data.text = ''
+    }
+    this.editor?.setState(data)
+    if (r && !noClose) {
+      this.props[`${type}List`]()
+    }
+  }
+
+  editFile = () => {
+    this.editor?.openEditor({
+      id: this.id,
+      file: this.state.file
+    })
   }
 
   transferOrEnterDirectory = async (e, edit) => {
     const { file } = this.state
-    const { isDirectory, type, id, size } = file
+    const { isDirectory, type, size } = file
+    const isLocal = type === typeMap.local
+    const isRemote = type === typeMap.remote
     if (isDirectory) {
       return this.enterDirectory(e)
     }
-    if (!edit && type === typeMap.local) {
+    if (!edit && isLocal) {
       return this.openFile(this.state.file)
     }
-    const remoteEedit = !edit && type === typeMap.remote && size < maxEditFileSize
-    const editProps = {
-      visible: true,
-      id,
-      sftpFunc: () => this.props.sftp,
-      file,
-      afterWrite: this.props[`${type}List`]
+    const remoteEdit = !edit && isRemote && size < maxEditFileSize
+    if (
+      edit === true || remoteEdit
+    ) {
+      return this.editFile()
     }
     if (
-      edit === true || remoteEedit
-    ) {
-      return this.props.store.storeAssign({
-        textEditorProps: editProps
-      })
-    } else if (
-      edit === 1 || remoteEedit
-    ) {
-      return this.props.store.storeAssign({
-        textEditorSystemProps: editProps
-      })
-    }
-    if (
-      _.get(this.props, 'tab.host')
+      this.props.tab?.host
     ) {
       this.transfer()
     }
   }
 
-  getTransferList = (
+  getTransferList = async (
     file,
     toPathBase,
     _typeTo,
     operation
   ) => {
-    const { name, path, type } = file
-    let typeTo = type === typeMap.local
+    const { name, path, type, isDirectory } = file
+    const isLocal = type === typeMap.local
+    let typeTo = isLocal
       ? typeMap.remote
       : typeMap.local
     if (_typeTo) {
       typeTo = _typeTo
     }
-    let toPath = type === typeMap.local
+    let toPath = isLocal
       ? this.props[typeMap.remote + 'Path']
       : this.props[typeMap.local + 'Path']
     if (toPathBase) {
       toPath = toPathBase
     }
     toPath = resolve(toPath, name)
-    return [{
+    const obj = {
+      host: this.props.tab?.host,
       typeFrom: type,
       typeTo,
       fromPath: resolve(path, name),
       toPath,
       id: generate(),
+      ...createTransferProps(this.props),
       operation
-    }]
+    }
+    if (isDirectory) {
+      const zip = await checkFolderSize(this.props, file)
+      Object.assign(obj, {
+        zip,
+        skipExpand: zip
+      })
+    }
+    return [obj]
   }
 
-  doTransferSelected = (
+  doTransferSelected = async (
     e,
     selectedFiles = this.props.selectedFiles,
     toPathBase,
@@ -667,7 +784,7 @@ export default class FileSection extends React.Component {
   ) => {
     let all = []
     for (const f of selectedFiles) {
-      const arr = this.getTransferList(f, toPathBase, typeTo, operation)
+      const arr = await this.getTransferList(f, toPathBase, typeTo, operation)
       all = [
         ...all,
         ...arr
@@ -678,20 +795,8 @@ export default class FileSection extends React.Component {
 
   transfer = async () => {
     const { file } = this.state
-    const arr = this.getTransferList(file)
+    const arr = await this.getTransferList(file)
     this.props.addTransferList(arr)
-  }
-
-  zipTransferDirectory = () => {
-    const { file } = this.state
-    const arr = this.getTransferList(file)
-    this.props.addTransferList(arr.map(s => {
-      return {
-        ...s,
-        zip: true,
-        skipExpand: true
-      }
-    }))
   }
 
   doEnterDirectory = (e) => {
@@ -702,15 +807,25 @@ export default class FileSection extends React.Component {
     this.props.onGoto(this.props.file.type)
   }
 
-  del = async (delSelected) => {
+  shouldShowSelectedMenu = () => {
+    const {
+      file: {
+        id
+      },
+      selectedFiles
+    } = this.props
+    return id &&
+      selectedFiles.length > 1 &&
+      some(selectedFiles, d => d.id === id)
+  }
+
+  del = async () => {
+    const delSelected = this.shouldShowSelectedMenu()
     const { file, selectedFiles } = this.props
     const { type } = file
     const files = delSelected
       ? selectedFiles
       : [file]
-    window.postMessage({
-      type: 'close-context-menu'
-    }, '*')
     await this.props.delFiles(type, files)
   }
 
@@ -734,7 +849,7 @@ export default class FileSection extends React.Component {
 
   newItem = (isDirectory) => {
     const { type } = this.state.file
-    const list = this.props[type]
+    const list = copy(this.props[type])
     list.unshift({
       name: '',
       nameTemp: '',
@@ -753,7 +868,7 @@ export default class FileSection extends React.Component {
     const files = shouldShowSelectedMenu
       ? selectedFiles
       : [file]
-    return this.props.renderDelConfirmTitle(files)
+    return this.props.renderDelConfirmTitle(files, true)
   }
 
   showModeEdit (type, id) {
@@ -766,282 +881,197 @@ export default class FileSection extends React.Component {
     return !isWin
   }
 
-  renderContext () {
+  renderContextMenu = () => {
+    return this.renderContextItems()
+      .map(r => {
+        const {
+          func,
+          text,
+          disabled,
+          icon,
+          subText,
+          requireConfirm
+        } = r
+        const IconCom = iconsMap[icon]
+        return {
+          key: func,
+          label: text,
+          disabled,
+          icon: <IconCom />,
+          extra: subText,
+          danger: requireConfirm
+        }
+      })
+  }
+
+  renderContextItems () {
     const {
       file: {
         type,
         isDirectory,
         size,
-        id
+        id,
+        isParent
       },
       selectedFiles,
       tab
     } = this.props
-    const hasHost = !!_.get(tab, 'host') && _.get(tab, 'enableSftp') !== false
-    const transferText = type === typeMap.local
+    const isRealFile = id && !isParent
+    const hasHost = !!tab.host
+    const { enableSsh } = tab
+    const isLocal = type === typeMap.local
+    const isRemote = type === typeMap.remote
+    const transferText = isLocal
       ? e(transferTypeMap.upload)
       : e(transferTypeMap.download)
-    const zipTransferTxt = type === typeMap.local
-      ? e('compressAndUpload')
-      : e('compressAndDownload')
-    const Icon = type === typeMap.local
-      ? CloudUploadOutlined
-      : CloudDownloadOutlined
+    const iconType = isLocal
+      ? 'CloudUploadOutlined'
+      : 'CloudDownloadOutlined'
     const len = selectedFiles.length
     const shouldShowSelectedMenu = id &&
       len > 1 &&
-      _.some(selectedFiles, d => d.id === id)
-    const cls = 'pd2x pd1y context-item pointer'
-    const delTxt = shouldShowSelectedMenu ? `${e('deleteAll')}(${len})` : m('del')
+      some(selectedFiles, d => d.id === id)
+    const delTxt = shouldShowSelectedMenu ? `${e('deleteAll')}(${len})` : e('del')
     const canPaste = hasFileInClipboardText()
-    const clsPaste = canPaste
-      ? cls
-      : cls + ' disabled'
     const showEdit = !isDirectory && id &&
       size < maxEditFileSize
-    return (
-      <div>
-        {
-          isDirectory && id
-            ? (
-              <div
-                className={cls}
-                onClick={this.doEnterDirectory}
-              >
-                <EnterOutlined /> {e('enter')}
-              </div>
-            )
-            : null
-        }
-        {
-          isDirectory && id && hasHost && len < 2
-            ? (
-              <div
-                className={cls}
-                onClick={this.zipTransferDirectory}
-              >
-                <Icon /> {zipTransferTxt}
-              </div>
-            )
-            : null
-        }
-        {
-          shouldShowSelectedMenu && hasHost
-            ? (
-              <div
-                className={cls}
-                onClick={this.doTransferSelected}
-              >
-                <Icon /> {transferText} {e('selected')}({len})
-              </div>
-            )
-            : null
-        }
-        {
-          !id || !hasHost
-            ? null
-            : (
-              <div
-                className={cls}
-                onClick={this.doTransfer}
-              >
-                <Icon /> {transferText}
-              </div>
-            )
-        }
-        {
-          !isDirectory && id && type === typeMap.local
-            ? (
-              <div
-                className={cls}
-                onClick={this.transferOrEnterDirectory}
-              >
-                <ArrowRightOutlined /> {e('open')}
-              </div>
-            )
-            : null
-        }
-        {
-          id && type === typeMap.local
-            ? (
-              <div
-                className={cls}
-                onClick={this.showInDefaultFileManager}
-              >
-                <ContainerOutlined /> {e('showInDefaultFileMananger')}
-              </div>
-            )
-            : null
-        }
-        {
-          showEdit
-            ? (
-              <div
-                className={cls}
-                onClick={
-                  e => this.transferOrEnterDirectory(e, true)
-                }
-              >
-                <EditOutlined /> {e('edit')}
-              </div>
-            )
-            : null
-        }
-        {
-          showEdit
-            ? (
-              <div
-                className={cls}
-                onClick={
-                  e => this.transferOrEnterDirectory(e, 1)
-                }
-              >
-                <EditOutlined /> {e('editWith')}
-              </div>
-            )
-            : null
-        }
-        {
-          id
-            ? (
-              <Popconfirm
-                cancelText={c('cancel')}
-                okText={c('ok')}
-                title={this.renderDelConfirmTitle(shouldShowSelectedMenu)}
-                onConfirm={() => this.del(shouldShowSelectedMenu)}
-              >
-                <div
-                  className={cls + ' no-auto-close-context'}
-                >
-                  <CloseCircleOutlined /> {delTxt}
-                </div>
-              </Popconfirm>
-            )
-            : null
-        }
-        {
-          id
-            ? (
-              <div
-                className={cls}
-                onClick={this.onCopy}
-              >
-                <CopyOutlined /> {m('copy')}
-                <span className='context-sub-text'>
-                  {ctrlOrCmd}+c
-                </span>
-              </div>
-            )
-            : null
-
-        }
-        {
-          id
-            ? (
-              <div
-                className={cls}
-                onClick={this.onCut}
-              >
-                <FileExcelOutlined /> {m('cut')}
-                <span className='context-sub-text'>
-                  {ctrlOrCmd}+x
-                </span>
-              </div>
-            )
-            : null
-
-        }
-        <div
-          className={clsPaste}
-          onClick={canPaste ? this.onPaste : _.noop}
-        >
-          <CopyOutlined /> {m('paste')}
-          <span className='context-sub-text'>
-            {ctrlOrCmd}+v
-          </span>
-        </div>
-        {
-          id
-            ? (
-              <div
-                className={cls}
-                onClick={this.doRename}
-              >
-                <EditOutlined /> {e('rename')}
-              </div>
-            )
-            : null
-        }
-        <div
-          className={cls}
-          onClick={this.newFile}
-        >
-          <FileAddOutlined /> {e('newFile')}
-        </div>
-        <div
-          className={cls}
-          onClick={this.newDirectory}
-        >
-          <FolderAddOutlined /> {e('newFolder')}
-        </div>
-        <div
-          className={cls}
-          onClick={this.selectAll}
-        >
-          <CheckSquareOutlined /> {e('selectAll')}
-          <span className='context-sub-text'>
-            {ctrlOrCmd}+a
-          </span>
-        </div>
-        <div
-          className={cls}
-          onClick={this.refresh}
-        >
-          <ReloadOutlined /> {e('refresh')}
-        </div>
-        {
-          this.showModeEdit(type, id)
-            ? (
-              <div
-                className={cls}
-                onClick={this.editPermission}
-              >
-                <LockOutlined /> {e('editPermission')}
-              </div>
-            )
-            : null
-        }
-        {
-          id
-            ? (
-              <div
-                className={cls}
-                onClick={this.showInfo}
-              >
-                <InfoCircleOutlined /> {e('info')}
-              </div>
-            )
-            : null
-        }
-      </div>
-    )
+    const res = []
+    if (isDirectory && isRealFile) {
+      res.push({
+        func: 'doEnterDirectory',
+        icon: 'EnterOutlined',
+        text: e('enter')
+      })
+    }
+    if (shouldShowSelectedMenu && hasHost) {
+      res.push({
+        func: 'doTransferSelected',
+        icon: iconType,
+        text: `${e('selected')}(${len})`
+      })
+    }
+    if (
+      isDirectory && isRealFile &&
+      (
+        (hasHost && enableSsh !== false && isRemote) ||
+        (isLocal && !hasHost)
+      )
+    ) {
+      res.push({
+        func: 'gotoFolderInTerminal',
+        icon: 'CodeOutlined',
+        text: e('gotoFolderInTerminal')
+      })
+    }
+    if (!(!isRealFile || !hasHost || shouldShowSelectedMenu)) {
+      res.push({
+        func: 'doTransfer',
+        icon: iconType,
+        text: transferText
+      })
+    }
+    if (!isDirectory && isRealFile && isLocal) {
+      res.push({
+        func: 'transferOrEnterDirectory',
+        icon: 'ArrowRightOutlined',
+        text: e('open')
+      })
+    }
+    if (isRealFile && isLocal) {
+      res.push({
+        func: 'showInDefaultFileManager',
+        icon: 'ContainerOutlined',
+        text: e('showInDefaultFileMananger')
+      })
+    }
+    if (showEdit) {
+      res.push({
+        func: 'editFile',
+        icon: 'EditOutlined',
+        text: e('edit')
+      })
+    }
+    if (isRealFile) {
+      res.push({
+        func: 'del',
+        icon: 'CloseCircleOutlined',
+        text: delTxt,
+        requireConfirm: true
+      })
+      res.push({
+        func: 'onCopy',
+        icon: 'CopyOutlined',
+        text: e('copy'),
+        subText: `${ctrlOrCmd}+c`
+      })
+      res.push({
+        func: 'onCut',
+        icon: 'FileExcelOutlined',
+        text: e('cut'),
+        subText: `${ctrlOrCmd}+x`
+      })
+    }
+    res.push({
+      func: 'onPaste',
+      icon: 'CopyOutlined',
+      text: e('paste'),
+      disabled: !canPaste,
+      subText: `${ctrlOrCmd}+v`
+    })
+    if (isRealFile) {
+      res.push({
+        func: 'doRename',
+        icon: 'EditOutlined',
+        text: e('rename')
+      })
+      res.push({
+        func: 'onCopyPath',
+        icon: 'CopyOutlined',
+        text: e('copyFilePath')
+      })
+    }
+    if (enableSsh !== false || isLocal) {
+      res.push({
+        func: 'newFile',
+        icon: 'FileAddOutlined',
+        text: e('newFile')
+      })
+      res.push({
+        func: 'newDirectory',
+        icon: 'FolderAddOutlined',
+        text: e('newFolder')
+      })
+    }
+    res.push({
+      func: 'selectAll',
+      icon: 'CheckSquareOutlined',
+      text: e('selectAll'),
+      subText: `${ctrlOrCmd}+a`
+    })
+    res.push({
+      func: 'refresh',
+      icon: 'ReloadOutlined',
+      text: e('refresh')
+    })
+    if (this.showModeEdit(type, isRealFile)) {
+      res.push({
+        func: 'editPermission',
+        icon: 'LockOutlined',
+        text: e('editPermission')
+      })
+    }
+    if (isRealFile) {
+      res.push({
+        func: 'showInfo',
+        icon: 'InfoCircleOutlined',
+        text: e('info')
+      })
+    }
+    return res
   }
 
-  onContextMenu = e => {
-    e.preventDefault()
-    const { file } = this.state
-    const selected = this.isSelected(file)
-    if (!selected) {
-      this.onClick(e)
-    }
-    this.props.modifier({
-      lastClickedFile: file
-    })
-    const content = this.renderContext()
-    this.props.store.openContextMenu({
-      content,
-      pos: computePos(e)
-    })
+  onContextMenu = ({ key }) => {
+    this[key]()
   }
 
   renderEditing (file) {
@@ -1056,35 +1086,36 @@ export default class FileSection extends React.Component {
         <Input
           value={nameTemp}
           addonBefore={pre}
-          onChange={this.onChange}
-          onBlur={this.onBlur}
-          onPressEnter={this.onBlur}
+          onChange={this.handleChange}
+          onBlur={this.handleBlur}
+          onPressEnter={this.handleBlur}
         />
       </div>
     )
   }
 
-  renderProp = ({ name, style }) => {
+  renderProp = ({ id, size }) => {
     const { file } = this.state
-    let value = file[name]
+    let value = file[id]
     let typeIcon = null
     let symbolicLinkText = null
     const {
       isDirectory,
-      isSymbolicLink
+      isSymbolicLink,
+      isParent
     } = file
-    if (isDirectory && name === 'size') {
+    if (isDirectory && id === 'size') {
       value = null
-    } else if (!isDirectory && name === 'size') {
+    } else if (!isDirectory && id === 'size') {
       value = filesize(value)
-    } else if (name === 'owner') {
+    } else if (id === 'owner') {
       const { type } = this.props
       value = this.props[`${type}UidTree`]['' + value] || value
-    } else if (name === 'group') {
+    } else if (id === 'group') {
       const { type } = this.props
       value = this.props[`${type}GidTree`]['' + value] || value
     }
-    if (name === 'name') {
+    if (id === 'name') {
       // const Icon = isDirectory
       //   ? FolderOutlined
       //   : FileOutlined
@@ -1092,17 +1123,29 @@ export default class FileSection extends React.Component {
       symbolicLinkText = isSymbolicLink
         ? <sup className='color-blue symbolic-link-icon'>*</sup>
         : null
-    } else if (name === 'mode') {
+    } else if (id === 'mode') {
       value = permission2mode(mode2permission(value))
-    } else if (name.toLowerCase().includes('time')) {
+    } else if (id.toLowerCase().includes('time')) {
       value = time(value)
+    }
+    const divProps = {
+      className: `sftp-file-prop noise shi-${id}`,
+      style: {
+        width: size + '%',
+        flexBasis: `${size}%`
+      },
+      title: value
+    }
+    if (isParent && id !== 'name') {
+      value = null
+      divProps.title = ''
+    } else if (isParent && id === 'name') {
+      value = '..'
     }
     return (
       <div
-        key={name}
-        title={value}
-        className={`sftp-file-prop noise shi-${name}`}
-        style={style}
+        {...divProps}
+        key={id}
       >
         {typeIcon}
         {symbolicLinkText}
@@ -1117,22 +1160,22 @@ export default class FileSection extends React.Component {
     const {
       isDirectory,
       id,
-      isEditing
+      isEditing,
+      isParent
     } = file
     if (isEditing) {
       return this.renderEditing(file)
     }
-    const selected = _.some(selectedFiles.filter(d => d), s => s.id === id)
+    const selected = some(selectedFiles.filter(d => d), s => s.id === id)
     const className = classnames('sftp-item', cls, type, {
       directory: isDirectory,
       selected
     })
     const props = {
       className,
-      draggable,
+      draggable: draggable && !isParent,
       onDoubleClick: this.transferOrEnterDirectory,
-      ..._.pick(this, [
-        'onContextMenu',
+      ...pick(this, [
         'onClick',
         'onDrag',
         'onDragEnter',
@@ -1142,22 +1185,34 @@ export default class FileSection extends React.Component {
         'onDrop',
         'onDragEnd'
       ]),
-      onDragStart: onDragStart || this.onDragStart
+      onDragStart: onDragStart || this.onDragStart,
+      'data-id': id,
+      id: this.id,
+      'data-is-parent': isParent ? 'y' : 'n',
+      'data-type': type,
+      title: file.name
+    }
+    const ddProps = {
+      menu: {
+        items: this.renderContextMenu(),
+        onClick: this.onContextMenu
+      },
+      trigger: ['contextMenu']
     }
     return (
-      <div
-        {...props}
-        data-id={id}
-        data-type={type}
-        title={file.name}
-      >
-        <div className='file-bg' />
-        <div className='file-props'>
-          {
-            properties.map(this.renderProp)
-          }
+      <Dropdown {...ddProps}>
+        <div
+          ref={this.domRef}
+          {...props}
+        >
+          <div className='file-bg' />
+          <div className='file-props-div'>
+            {
+              properties.map(this.renderProp)
+            }
+          </div>
         </div>
-      </div>
+      </Dropdown>
     )
   }
 }

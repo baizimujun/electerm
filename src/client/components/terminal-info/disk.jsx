@@ -3,22 +3,24 @@
  */
 
 import { Table } from 'antd'
-import _ from 'lodash'
+import { isEmpty } from 'lodash-es'
+import colsParser from './data-cols-parser'
+import { PartitionOutlined } from '@ant-design/icons'
 
 export default function TerminalInfoDisk (props) {
-  const { disks } = props
-  if (_.isEmpty(disks) || !props.isRemote) {
+  const { disks, isRemote, terminalInfos } = props
+  if (isEmpty(disks) || !isRemote || !terminalInfos.includes('disks')) {
     return null
   }
-  const col = Object.keys(disks[0]).map((k, i) => {
-    return {
-      title: k,
-      dataIndex: k,
-      key: k,
-      sorter: (a, b) => {
-        return a[k] > b[k] ? 1 : -1
-      }
+  const col = colsParser(disks[0])
+  disks.sort((a, b) => {
+    if (a.filesystem.startsWith('/') && !b.filesystem.startsWith('/')) {
+      return -1
     }
+    if (!a.filesystem.startsWith('/') && b.filesystem.startsWith('/')) {
+      return 1
+    }
+    return 0
   })
   const ps = {
     rowKey: (rec) => `${rec.mount}_${rec.filesystem}`,
@@ -26,13 +28,11 @@ export default function TerminalInfoDisk (props) {
     bordered: true,
     columns: col,
     size: 'small',
-    pagination: {
-      pageSize: 10000
-    }
+    pagination: false
   }
   return (
     <div className='terminal-info-section terminal-info-disk'>
-      <div className='pd1y bold'>File system</div>
+      <div className='pd1y bold'><PartitionOutlined /> File system</div>
       <Table {...ps} />
     </div>
   )

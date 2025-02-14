@@ -9,16 +9,14 @@ import {
 } from './constants'
 import { buildNewTheme } from '../common/terminal-theme'
 
-const { prefix } = window
-const e = prefix('control')
+const e = window.translate
 const newQuickCommand = 'newQuickCommand'
-const q = prefix('quickCommands')
 
 export default (arr, tab) => {
   if (tab === settingMap.history) {
     return arr[0] || {}
   } else if (tab === settingMap.bookmarks) {
-    return { id: newBookmarkIdPrefix + ':' + (+new Date()), title: '' }
+    return { id: newBookmarkIdPrefix + ':' + (Date.now()), title: '' }
   } else if (tab === settingMap.setting) {
     return { id: settingCommonId, title: e('common') }
   } else if (tab === settingMap.terminalThemes) {
@@ -26,7 +24,12 @@ export default (arr, tab) => {
   } else if (tab === settingMap.quickCommands) {
     return {
       id: '',
-      name: q(newQuickCommand)
+      name: encodeURIComponent(newQuickCommand)
+    }
+  } else if (tab === settingMap.profiles) {
+    return {
+      id: '',
+      name: e(settingMap.profiles)
     }
   }
 }

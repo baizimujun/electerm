@@ -5,9 +5,10 @@
 import {
   settingMap
 } from '../common/constants'
-import _ from 'lodash'
+import { without, isArray } from 'lodash-es'
 import handleError from './error-handler'
-import { nanoid as generate } from 'nanoid/non-secure'
+import generate from './uid'
+import safeParse from './to-simple-obj'
 import { encObj, decObj } from './pass-enc'
 
 /**
@@ -22,8 +23,14 @@ const dbAction = (...args) => {
 /**
  * standalone db names
  */
-export const dbNames = _.without(
-  Object.keys(settingMap), settingMap.setting
+export const dbNames = without(
+  Object.keys(settingMap),
+  settingMap.setting
+)
+
+export const dbNamesForWatch = without(
+  Object.keys(settingMap),
+  settingMap.setting
 )
 
 /**
@@ -32,7 +39,7 @@ export const dbNames = _.without(
  * @param {object or array} inst
  */
 export function insert (dbName, inst) {
-  let arr = _.isArray(inst) ? inst : [inst]
+  let arr = isArray(inst) ? inst : [inst]
   arr = arr.map(obj => {
     const { id, _id, ...rest } = obj
     return {
@@ -40,7 +47,7 @@ export function insert (dbName, inst) {
       ...encObj(rest)
     }
   })
-  return dbAction(dbName, 'insert', arr)
+  return dbAction(dbName, 'insert', safeParse(arr))
 }
 
 /**
@@ -51,8 +58,8 @@ export function insert (dbName, inst) {
 export async function remove (dbName, id) {
   const q = id
     ? {
-      _id: id
-    }
+        _id: id
+      }
     : {}
   const multi = !id
   await dbAction(dbName, 'remove', q, { multi })
@@ -67,18 +74,18 @@ export async function remove (dbName, id) {
 export function update (_id, value, db = 'data', upsert = true) {
   const updates = dbNames.includes(db)
     ? {
-      $set: {
-        ...encObj(value)
+        $set: {
+          ...encObj(value)
+        }
       }
-    }
     : {
-      $set: {
-        value
+        $set: {
+          value
+        }
       }
-    }
   return dbAction(db, 'update', {
     _id
-  }, updates, {
+  }, safeParse(updates), {
     upsert
   })
 }
@@ -108,7 +115,7 @@ export async function findOne (dbName, id) {
  * @param {string} dbName
  */
 export async function find (dbName) {
-  const res = await dbAction(dbName, 'find', {})
+  const res = await dbAction(dbName, 'find', {}) || []
   return res.map(r => {
     const { _id, ...rest } = r
     return {
@@ -134,12 +141,16 @@ export async function getData (name) {
  * get sorted data from db
  * @param {string} dbName
  */
+
 export async function fetchInitData (dbName) {
   const res = await find(dbName)
   const order = await getData(`${dbName}:order`)
-  return res.sort((a, b) => {
-    const ai = _.findIndex(order, r => r === a.id)
-    const bi = _.findIndex(order, r => r === b.id)
-    return ai - bi
-  })
+  if (order && order.length) {
+    res.sort((a, b) => {
+      const ai = order.findIndex(r => r === a.id)
+      const bi = order.findIndex(r => r === b.id)
+      return ai - bi
+    })
+  }
+  return JSON.stringify(res)
 }

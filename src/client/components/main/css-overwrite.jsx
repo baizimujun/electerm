@@ -7,9 +7,9 @@ import fs from '../../common/fs'
 import { noTerminalBgValue } from '../../common/constants'
 
 export default class CssOverwrite extends PureComponent {
-  componentDidMount () {
-    setTimeout(this.writeCss, 1000)
-  }
+  // componentDidMount () {
+  //   setTimeout(this.writeCss, 3000)
+  // }
 
   componentDidUpdate (prevProps) {
     Object.keys(this.props).some(key => {
@@ -17,7 +17,11 @@ export default class CssOverwrite extends PureComponent {
         this.updateCss()
         return true
       }
+      return false
     })
+    if (!prevProps.wsInited && this.props.wsInited) {
+      this.writeCss()
+    }
   }
 
   createStyle = async () => {
@@ -37,14 +41,13 @@ export default class CssOverwrite extends PureComponent {
       st = `url(${terminalBackgroundImagePath}) !important`
     }
     if (!st) {
-      return `#container .ssh-wrap-show .xterm-viewport {
+      return `#container .session-batch-active .xterm-screen::before {
         background-image: url("./images/electerm-watermark.png");
       }`
     }
 
     const styles = [
       `background-image: ${st}`,
-      'background-size: cover',
       'background-position: center'
     ]
 
@@ -62,7 +65,7 @@ export default class CssOverwrite extends PureComponent {
       })`)
     }
 
-    return `#container .ssh-wrap-show .xterm-viewport {
+    return `#container .session-batch-active .xterm-screen::before {
       ${styles.join(';')} 
     }`
   }
@@ -77,7 +80,9 @@ export default class CssOverwrite extends PureComponent {
 
   updateCss = async () => {
     const style = document.getElementById('css-overwrite')
-    style.innerHTML = await this.createStyle()
+    if (style) {
+      style.innerHTML = await this.createStyle()
+    }
   }
 
   render () {

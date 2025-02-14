@@ -5,8 +5,12 @@
 import { Modal } from 'antd'
 import delay from '../common/wait'
 
-export default (store) => {
-  store.checkForDbUpgrade = async () => {
+export default (Store) => {
+  Store.prototype.checkForDbUpgrade = async function () {
+    const { store } = window
+    if (store.isSecondInstance) {
+      return false
+    }
     const shouldUpgrade = await window.pre.runGlobalAsync('checkDbUpgrade')
     if (!shouldUpgrade) {
       return false
@@ -31,8 +35,9 @@ export default (store) => {
       content: 'Database Upgraded',
       okButtonProps: {}
     })
-    await delay(1000)
+    await delay(2000)
     mod.destroy()
+    await store.restart()
     return true
   }
 }

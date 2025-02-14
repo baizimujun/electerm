@@ -1,58 +1,36 @@
-
 import { Component } from 'react'
-import { nanoid as generate } from 'nanoid/non-secure'
-import { mergeProxy } from '../../common/merge-proxy'
-import {
-  ArrowUpOutlined,
-  EyeInvisibleFilled,
-  EyeFilled,
-  ReloadOutlined,
-  ArrowRightOutlined,
-  LoadingOutlined
-} from '@ant-design/icons'
+import { refs } from '../common/ref'
+import generate from '../../common/uid'
 import runIdle from '../../common/run-idle'
-import { Input, Tooltip, Spin, Modal, notification } from 'antd'
-import _ from 'lodash'
+import { Spin, Modal, notification } from 'antd'
+import { isEqual, last, isNumber, some, isArray, pick, uniq, debounce } from 'lodash-es'
 import FileSection from './file-item'
 import resolve from '../../common/resolve'
 import wait from '../../common/wait'
 import isAbsPath from '../../common/is-absolute-path'
 import classnames from 'classnames'
 import sorterIndex from '../../common/index-sorter'
-import { getLocalFileInfo, getRemoteFileInfo } from './file-read'
+import { getLocalFileInfo, getRemoteFileInfo, getFolderFromFilePath } from './file-read'
 import {
   typeMap, maxSftpHistory, paneMap,
-  eventTypes,
   fileTypeMap,
-  terminalSshConfigType, terminalSerialType,
-  unexpectedPacketErrorDesc, sftpRetryInterval
+  terminalSerialType,
+  unexpectedPacketErrorDesc,
+  sftpRetryInterval
 } from '../../common/constants'
 import { hasFileInClipboardText } from '../../common/clipboard'
 import Client from '../../common/sftp'
 import fs from '../../common/fs'
-import ResizeWrap from '../common/resize-wrap'
-import keyControlPressed from '../../common/key-control-pressed'
-import keyPressed from '../../common/key-pressed'
 import ListTable from './list-table-ui'
 import deepCopy from 'json-deep-copy'
 import isValidPath from '../../common/is-valid-path'
 import memoizeOne from 'memoize-one'
-import TransportEntry from './transport-entry'
 import * as owner from './owner-list'
+import AddressBar from './address-bar'
+import getProxy from '../../common/get-proxy'
 import './sftp.styl'
 
-const { prefix } = window
-const e = prefix('sftp')
-const c = prefix('common')
-
-const buildTree = arr => {
-  return arr.reduce((prev, curr) => {
-    return {
-      ...prev,
-      [curr.id]: curr
-    }
-  }, {})
-}
+const e = window.translate
 
 export default class Sftp extends Component {
   constructor (props) {
@@ -64,20 +42,19 @@ export default class Sftp extends Component {
       onEditFile: false,
       ...this.defaultState(),
       loadingSftp: false,
-      transferToConfirm: null,
-      transferList: [],
-      fileOperation: '',
-      pauseAll: false
+      inited: false
     }
     this.retryCount = 0
   }
 
   componentDidMount () {
-    this.initData()
-    this.initEvent()
+    this.id = 'sftp-' + this.props.sessionId
+    this.tid = 'sftp-' + this.props.tab.id
+    refs.add(this.id, this)
+    refs.add(this.tid, this)
   }
 
-  componentDidUpdate (prevProps) {
+  componentDidUpdate (prevProps, prevState) {
     if (
       (
         prevProps.enableSftp !== false &&
@@ -92,12 +69,45 @@ export default class Sftp extends Component {
     ) {
       this.initData(true)
     }
+    if (
+      this.props.config.autoRefreshWhenSwitchToSftp &&
+      prevProps.pane !== this.props.pane &&
+      (this.props.pane === paneMap.fileManager || this.props.pane.sftp) &&
+      this.state.inited
+    ) {
+      this.onGoto(typeMap.local)
+      this.onGoto(typeMap.remote)
+    }
+    if (
+      prevState.remotePath !== this.state.remotePath &&
+      this.state.selectedFiles.some(f => f.type === typeMap.remote)
+    ) {
+      this.setState({
+        selectedFiles: []
+      })
+    } else if (
+      prevState.localPath !== this.state.localPath &&
+      this.state.selectedFiles.some(f => f.type === typeMap.local)
+    ) {
+      this.setState({
+        selectedFiles: []
+      })
+    }
+    if (
+      this.props.sftpPathFollowSsh &&
+      prevProps.cwd !== this.props.cwd
+    ) {
+      this.updateCwd(this.props.cwd)
+    }
   }
 
   componentWillUnmount () {
-    this.destroyEvent()
+    refs.remove(this.id)
+    refs.remove(this.tid)
     this.sftp && this.sftp.destroy()
+    this.sftp = null
     clearTimeout(this.timer4)
+    this.timer4 = null
   }
 
   directions = [
@@ -105,20 +115,21 @@ export default class Sftp extends Component {
     'asc'
   ]
 
-  defaultDirection = () => {
-    return this.directions[0]
+  defaultDirection = (i = 0) => {
+    return this.directions[i]
   }
 
   defaultState = () => {
-    return Object.keys(typeMap).reduce((prev, k) => {
+    const def = this.props.config.showHiddenFilesOnSftpStart
+    return Object.keys(typeMap).reduce((prev, k, i) => {
       Object.assign(prev, {
-        [`sortProp.${k}`]: 'modifyTime',
-        [`sortDirection.${k}`]: this.defaultDirection(),
+        [`sortProp.${k}`]: window.store.sftpSortSetting[k].prop,
+        [`sortDirection.${k}`]: window.store.sftpSortSetting[k].direction,
         [k]: [],
         [`${k}FileTree`]: {},
         [`${k}Loading`]: false,
         [`${k}InputFocus`]: false,
-        [`${k}ShowHiddenFile`]: false,
+        [`${k}ShowHiddenFile`]: def,
         [`${k}Path`]: '',
         [`${k}PathTemp`]: '',
         [`${k}PathHistory`]: [],
@@ -135,64 +146,100 @@ export default class Sftp extends Component {
     sortDirection,
     sortProp
   ) => {
-    const l0 = _.find(list, g => !g.id)
-    const l1 = list.filter(g => g.id && g.isDirectory)
-    const l2 = list.filter(g => g.id && !g.isDirectory)
-    const sorter = (a, b) => {
-      let va = a[sortProp]
-      let vb = b[sortProp]
-      if (_.isString(va)) {
-        va = va.toLowerCase()
-        vb = vb.toLowerCase()
-      }
-      if (sortDirection === 'desc') {
-        if (_.isString(va)) {
-          return va.localeCompare(vb, { sensitivity: 'base' })
-        }
-        return va > vb ? -1 : 1
-      } else {
-        if (_.isString(va)) {
-          return -va.localeCompare(vb, { sensitivity: 'base' })
-        }
-        return va > vb ? 1 : -1
-      }
+    if (!list || !list.length) {
+      return []
     }
-    return [
-      l0,
-      ...l1.sort(sorter),
-      ...l2.sort(sorter)
-    ].filter(d => d)
-  }, _.isEqual)
 
-  initEvent () {
-    window.addEventListener('keydown', this.handleEvent)
-  }
+    const isDesc = sortDirection === 'desc'
 
-  destroyEvent () {
-    window.removeEventListener('keydown', this.handleEvent)
-  }
+    return list.slice().sort((a, b) => {
+      // Handle items with no id first
+      if (!a.id && b.id) return -1
+      if (a.id && !b.id) return 1
+      if (!a.id && !b.id) return 0
+
+      // Sort directories before files
+      if (a.isDirectory !== b.isDirectory) {
+        return a.isDirectory ? -1 : 1
+      }
+
+      // Sort by the specified property
+      let aValue = a[sortProp]
+      let bValue = b[sortProp]
+
+      if (typeof aValue === 'string') {
+        aValue = aValue.toLowerCase()
+        bValue = bValue.toLowerCase()
+        return isDesc
+          ? bValue.localeCompare(aValue, { sensitivity: 'base' })
+          : aValue.localeCompare(bValue, { sensitivity: 'base' })
+      }
+
+      // For non-string values, use simple comparison
+      if (aValue < bValue) return isDesc ? 1 : -1
+      if (aValue > bValue) return isDesc ? -1 : 1
+      return 0
+    })
+  }, isEqual)
 
   isActive () {
-    return this.props.currentTabId === this.props.tab.id &&
+    return this.props.enableSftp && this.props.currentBatchTabId === this.props.tab.id &&
       this.props.pane === paneMap.fileManager
+  }
+
+  getCwdLocal = () => {
+    if (
+      !this.shouldRenderRemote() &&
+      this.props.sftpPathFollowSsh &&
+      this.props.cwd
+    ) {
+      return this.props.cwd
+    }
+  }
+
+  updateCwd = (cwd) => {
+    if (!this.state.inited) {
+      return
+    }
+    const type = this.shouldRenderRemote()
+      ? typeMap.remote
+      : typeMap.local
+    // this.setState({
+    //   [`${type}PathTemp`]: cwd
+    // }, () => {
+    //   this.onGoto(
+    //     type
+    //   )
+    // })
+    const n = `${type}Path`
+    const nt = n + 'Temp'
+    this.setState({
+      [n]: cwd,
+      [nt]: cwd
+    }, () => this[`${type}List`]())
+  }
+
+  getPwd = async (username) => {
+    if (this.props.sftpPathFollowSsh && this.props.cwd) {
+      return this.props.cwd
+    }
+    const home = await this.sftp.getHomeDir()
+    if (home) {
+      return home.trim()
+    } else {
+      return username === 'root'
+        ? '/root'
+        : `/home/${this.props.tab.username}`
+    }
   }
 
   getIndex = (file) => {
     const { type } = file
-    return _.findIndex(this.getFileList(type), f => f.id === file.id)
-  }
-
-  onResizeDragEnd = () => {
-    window.postMessage({
-      type: eventTypes.resetFileListTable,
-      data: {
-        id: this.state.id
-      }
-    }, '*')
+    return this.getFileList(type).findIndex(f => f.id === file.id)
   }
 
   selectAll = (type, e) => {
-    e.preventDefault()
+    e && e.preventDefault && e.preventDefault()
     this.setState({
       selectedFiles: this.getFileList(type)
     })
@@ -202,14 +249,14 @@ export default class Sftp extends Component {
     const { selectedFiles } = this.state
     const sorted = selectedFiles.map(f => this.getIndex(f))
       .sort(sorterIndex)
-    const last = _.last(sorted)
+    const lastOne = last(sorted)
     const list = this.getFileList(type)
     if (!list.length) {
       return
     }
     let next = 0
-    if (_.isNumber(last)) {
-      next = (last + 1) % list.length
+    if (isNumber(lastOne)) {
+      next = (lastOne + 1) % list.length
     }
     const nextFile = list[next]
     if (nextFile) {
@@ -223,15 +270,15 @@ export default class Sftp extends Component {
     const { selectedFiles } = this.state
     const sorted = selectedFiles.map(f => this.getIndex(f))
       .sort(sorterIndex)
-    const last = sorted[0]
+    const lastOne = sorted[0]
     const list = this.getFileList(type)
     if (!list.length) {
       return
     }
     let next = 0
     const len = list.length
-    if (_.isNumber(last)) {
-      next = (last - 1 + len) % len
+    if (isNumber(lastOne)) {
+      next = (lastOne - 1 + len) % len
     }
     const nextFile = list[next]
     if (nextFile) {
@@ -244,10 +291,10 @@ export default class Sftp extends Component {
   localDel = async (file) => {
     const { name, isDirectory, path } = file
     const func = !isDirectory
-      ? fs.unlinkAsync
+      ? fs.unlink
       : fs.rmrf
     const p = resolve(path, name)
-    await func(p).catch(this.props.store.onError)
+    await func(p).catch(window.store.onError)
   }
 
   remoteDel = async (file) => {
@@ -257,11 +304,28 @@ export default class Sftp extends Component {
       ? sftp.rmdir
       : sftp.rm
     const p = resolve(path, name)
-    await func(p).catch(this.props.store.onError)
+    await func(p).catch(window.store.onError)
+  }
+
+  confirmDelete = (files) => {
+    return new Promise((resolve) => {
+      Modal.confirm({
+        title: this.renderDelConfirmTitle(files),
+        okText: e('ok'),
+        cancelText: e('cancel'),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false)
+      })
+    })
   }
 
   delFiles = async (_type, files = this.state.selectedFiles) => {
+    this.onDelete = true
+    const confirm = await this.confirmDelete(files)
     this.onDelete = false
+    if (!confirm) {
+      return
+    }
     const type = files[0].type || _type
     const func = this[type + 'Del']
     for (const f of files) {
@@ -273,9 +337,15 @@ export default class Sftp extends Component {
     this[type + 'List']()
   }
 
-  renderDelConfirmTitle (files = this.state.selectedFiles) {
-    const hasDirectory = _.some(files, f => f.isDirectory)
+  renderDelConfirmTitle (files = this.state.selectedFiles, pureText) {
+    const hasDirectory = some(files, f => f.isDirectory)
     const names = hasDirectory ? e('filesAndFolders') : e('files')
+    if (pureText) {
+      const t1 = hasDirectory
+        ? e('delTip1')
+        : ''
+      return `${e('delTip')} ${names} ${t1} (${files.length})`
+    }
     return (
       <div className='wordbreak'>
         {e('delTip')}
@@ -288,16 +358,6 @@ export default class Sftp extends Component {
         (<b className='mg1x'>{files.length}</b>)
       </div>
     )
-  }
-
-  onDel = (type, files) => {
-    this.onDelete = true
-    Modal.confirm({
-      cancelText: c('cancel'),
-      okText: c('ok'),
-      title: this.renderDelConfirmTitle(files),
-      onOk: () => this.delFiles(type, files)
-    })
   }
 
   enter = (type, e) => {
@@ -333,11 +393,11 @@ export default class Sftp extends Component {
   }
 
   doCopy = (type, e) => {
-    this[type + 'Dom'].onCopy(e, this.state.selectedFiles)
+    this[type + 'Dom'].onCopy(this.state.selectedFiles)
   }
 
   doCut = (type, e) => {
-    this[type + 'Dom'].onCut(e, this.state.selectedFiles)
+    this[type + 'Dom'].onCut(this.state.selectedFiles)
   }
 
   doPaste = (type) => {
@@ -347,58 +407,26 @@ export default class Sftp extends Component {
     this[type + 'Dom'].onPaste()
   }
 
-  handleEvent = (e) => {
-    if (!this.isActive() || this.state.onEditFile || this.props.store.textEditorProps.id) {
-      return
+  initData = async () => {
+    if (this.shouldRenderRemote()) {
+      this.initRemoteAll()
     }
-    const lastClickedFile = this.state.lastClickedFile || {
-      type: typeMap.local
-    }
-    const { type } = lastClickedFile
-    const { inputFocus, onDelete } = this
-    if (keyControlPressed(e) && keyPressed(e, 'a') && !inputFocus) {
-      e.stopPropagation()
-      this.selectAll(type, e)
-    } else if (keyPressed(e, 'arrowdown') && !inputFocus) {
-      e.stopPropagation()
-      this.selectNext(type)
-    } else if (keyPressed(e, 'arrowup') && !inputFocus) {
-      e.stopPropagation()
-      this.selectPrev(type)
-    } else if (keyPressed(e, 'delete') && !inputFocus) {
-      e.stopPropagation()
-      this.onDel(type)
-    } else if (keyPressed(e, 'enter') && !inputFocus && !onDelete) {
-      e.stopPropagation()
-      this.enter(type, e)
-    } else if (keyControlPressed(e) && keyPressed(e, 'c') && !inputFocus) {
-      e.stopPropagation()
-      this.doCopy(type, e)
-    } else if (keyControlPressed(e) && keyPressed(e, 'x') && !inputFocus) {
-      e.stopPropagation()
-      this.doCut(type, e)
-    } else if (keyControlPressed(e) && keyPressed(e, 'v') && !inputFocus) {
-      e.stopPropagation()
-      this.doPaste(type, e)
-    } else if (keyPressed(e, 'f5')) {
-      e.stopPropagation()
-      this.onGoto(type)
-    }
+    this.initLocalAll()
   }
 
-  initData = async (remoteInit) => {
-    if (remoteInit) {
-      const { props } = this
-      const host = _.get(props, 'tab.host') &&
-        _.get(props, 'tab.type') !== terminalSshConfigType &&
-        _.get(props, 'tab.type') !== terminalSerialType
-      if (host) {
-        await this.remoteList()
-        this.remoteListOwner()
-      }
-    }
+  shouldRenderRemote = () => {
+    const { props } = this
+    return props.tab?.host && props.tab?.type !== terminalSerialType
+  }
+
+  initLocalAll = () => {
     this.localListOwner()
     this.localList()
+  }
+
+  initRemoteAll = async () => {
+    await this.remoteList()
+    this.remoteListOwner()
   }
 
   modifier = (...args) => {
@@ -406,10 +434,7 @@ export default class Sftp extends Component {
   }
 
   addTransferList = list => {
-    window.postMessage({
-      list,
-      sessionId: this.props.sessionId
-    }, '*')
+    window.store.addTransferList(list)
   }
 
   computeListHeight = () => {
@@ -418,7 +443,7 @@ export default class Sftp extends Component {
   }
 
   onError = e => {
-    this.props.store.onError(e)
+    window.store.onError(e)
     this.setState({
       remoteLoading: false
     })
@@ -427,7 +452,7 @@ export default class Sftp extends Component {
   getFileList = type => {
     const showHide = this.state[`${type}ShowHiddenFile`]
     let list = this.state[type]
-    list = _.isArray(list) ? list : []
+    list = isArray(list) ? list : []
     if (!showHide) {
       list = list.filter(f => !/^\./.test(f.name))
     }
@@ -445,6 +470,18 @@ export default class Sftp extends Component {
     this.setState({
       [prop]: !b
     })
+  }
+
+  buildTree = (arr, type) => {
+    const parent = this.renderParentItem(type)
+    const treeMap = new Map(arr.map(d => [d.id, d]))
+
+    // Only add parent if it exists
+    if (parent) {
+      treeMap.set(parent.id, parent)
+    }
+
+    return treeMap
   }
 
   remoteListOwner = async () => {
@@ -469,6 +506,26 @@ export default class Sftp extends Component {
       localGidTree,
       localUidTree
     })
+  }
+
+  sftpList = (sftp, remotePath) => {
+    return sftp.list(remotePath)
+      .then(arr => {
+        return arr.map(item => {
+          const { type } = item
+          return {
+            ...pick(
+              item,
+              ['name', 'size', 'accessTime', 'modifyTime', 'mode', 'owner', 'group']
+            ),
+            isDirectory: type === fileTypeMap.directory,
+            type: typeMap.remote,
+            path: remotePath,
+            isSymbol: type === fileTypeMap.link,
+            id: generate()
+          }
+        })
+      })
   }
 
   remoteList = async (
@@ -501,19 +558,18 @@ export default class Sftp extends Component {
         const config = deepCopy(
           this.props.config
         )
-        this.setState(() => {
-          return {
-            loadingSftp: true
-          }
+        this.setState({
+          loadingSftp: true
         })
-        const r = await sftp.connect({
+        const opts = deepCopy({
           ...tab,
-          readyTimeout: _.get(config, 'sshReadyTimeout'),
+          readyTimeout: config.sshReadyTimeout,
           sessionId,
-          keepaliveInterval: _.get(config, 'keepaliveInterval'),
-          proxy: mergeProxy(config, tab),
+          keepaliveInterval: config.keepaliveInterval,
+          proxy: getProxy(tab, config),
           ...sessionOptions
         })
+        const r = await sftp.connect(opts)
           .catch(e => {
             if (
               e &&
@@ -537,7 +593,9 @@ export default class Sftp extends Component {
         })
         if (!r) {
           sftp.destroy()
-          return
+          return this.props.editTab(tab.id, {
+            sftpCreated: false
+          })
         } else {
           this.sftp = sftp
         }
@@ -547,74 +605,16 @@ export default class Sftp extends Component {
         if (startDirectory) {
           remotePath = startDirectory
         } else {
-          let home = await sftp.getHomeDir()
-            .then(r => r)
-            .catch(err => {
-              this.props.store.onError(err)
-              return ''
-            })
-          if (home.includes('error:')) {
-            home = '/'
-          }
-          if (home) {
-            remotePath = home.trim()
-          } else {
-            remotePath = username === 'root'
-              ? '/root'
-              : `/home/${tab.username}`
-          }
+          remotePath = await this.getPwd(username)
         }
       }
 
-      let remote = await sftp.list(remotePath)
+      const remote = await this.sftpList(sftp, remotePath)
       this.sftp = sftp
-      const remotes = deepCopy(remote)
-      remote = []
-      for (const _r of remotes) {
-        const r = _r
-        const { type, name } = r
-        const f = {
-          ..._.pick(r, ['name', 'size', 'accessTime', 'modifyTime', 'mode', 'owner', 'group']),
-          isDirectory: r.type === fileTypeMap.directory,
-          type: typeMap.remote,
-          path: remotePath,
-          id: generate()
-        }
-        if (type === fileTypeMap.link) {
-          const linkPath = resolve(remotePath, name)
-          let realpath = await sftp.readlink(linkPath)
-            .catch(e => {
-              console.debug(e)
-              return null
-            })
-          if (!realpath) {
-            continue
-          }
-          if (!isAbsPath(realpath)) {
-            realpath = resolve(remotePath, realpath)
-            realpath = await sftp.realpath(realpath)
-          }
-          const realFileInfo = await getRemoteFileInfo(
-            sftp,
-            realpath
-          ).catch(e => {
-            log.debug('seems a bad symbolic link')
-            log.debug(e)
-            return null
-          })
-          if (!realFileInfo) {
-            continue
-          }
-          f.isSymbolicLink = true
-          f.isDirectory = realFileInfo.isDirectory
-        } else {
-          f.isSymbolicLink = false
-        }
-        remote.push(f)
-      }
       const update = {
         remote,
-        remoteFileTree: buildTree(remote),
+        remoteFileTree: this.buildTree(remote, typeMap.remote),
+        inited: true,
         remoteLoading: false
       }
       if (!noPathInit) {
@@ -627,12 +627,17 @@ export default class Sftp extends Component {
         update.onEditFile = false
       }
       if (oldPath) {
-        update.remotePathHistory = _.uniq([
+        update.remotePathHistory = uniq([
           oldPath,
           ...this.state.remotePathHistory
         ]).slice(0, maxSftpHistory)
       }
-      this.setState(update)
+      this.setState(update, () => {
+        this.updateRemoteList(remote, remotePath, sftp)
+        this.props.editTab(tab.id, {
+          sftpCreated: true
+        })
+      })
     } catch (e) {
       const update = {
         remoteLoading: false,
@@ -648,6 +653,53 @@ export default class Sftp extends Component {
     }
   }
 
+  updateRemoteList = async (
+    remotes,
+    remotePath,
+    sftp
+  ) => {
+    const remote = []
+    for (const r of remotes) {
+      const { name } = r
+      if (r.isSymbol) {
+        const linkPath = resolve(remotePath, name)
+        let realpath = await sftp.readlink(linkPath)
+          .catch(e => {
+            console.debug(e)
+            return null
+          })
+        if (!realpath) {
+          continue
+        }
+        if (!isAbsPath(realpath)) {
+          realpath = resolve(remotePath, realpath)
+          realpath = await sftp.realpath(realpath)
+        }
+        const realFileInfo = await getRemoteFileInfo(
+          sftp,
+          realpath
+        ).catch(e => {
+          log.debug('seems a bad symbolic link')
+          log.debug(e)
+          return null
+        })
+        if (!realFileInfo) {
+          continue
+        }
+        r.isSymbolicLink = true
+        r.isDirectory = realFileInfo.isDirectory
+      } else {
+        r.isSymbolicLink = false
+      }
+      remote.push(r)
+    }
+    const update = {
+      remote,
+      remoteFileTree: this.buildTree(remote, typeMap.remote)
+    }
+    this.setState(update)
+  }
+
   localList = async (returnList = false, localPathReal, oldPath) => {
     if (!fs) return
     if (!returnList) {
@@ -660,7 +712,10 @@ export default class Sftp extends Component {
     )
     try {
       const noPathInit = localPathReal || this.state.localPath
-      const localPath = noPathInit || this.props.tab.startDirectoryLocal || window.pre.homeOrtmp
+      const localPath = noPathInit ||
+        this.getCwdLocal() ||
+        this.props.tab.startDirectoryLocal ||
+        window.pre.homeOrTmp
       const locals = await fs.readdirAsync(localPath)
       const local = []
       for (const name of locals) {
@@ -672,7 +727,8 @@ export default class Sftp extends Component {
       }
       const update = {
         local,
-        localFileTree: buildTree(local),
+        inited: true,
+        localFileTree: this.buildTree(local, typeMap.local),
         localLoading: false
       }
       if (!noPathInit) {
@@ -685,7 +741,7 @@ export default class Sftp extends Component {
         update.onEditFile = false
       }
       if (oldPath) {
-        update.localPathHistory = _.uniq([
+        update.localPathHistory = uniq([
           oldPath,
           ...this.state.localPathHistory
         ]).slice(0, maxSftpHistory)
@@ -705,9 +761,9 @@ export default class Sftp extends Component {
     }
   }
 
-  remoteListDebounce = _.debounce(this.remoteList, 1000)
+  remoteListDebounce = debounce(this.remoteList, 1000)
 
-  localListDebounce = _.debounce(this.localList, 1000)
+  localListDebounce = debounce(this.localList, 1000)
 
   timers = {}
 
@@ -726,6 +782,22 @@ export default class Sftp extends Component {
     }, () => this[`${type}List`](undefined, undefined, oldPath))
   }
 
+  parsePath = (type, pth) => {
+    const reg = /^%([^%]+)%/
+    if (!reg.test(pth)) {
+      return pth
+    }
+    const m = pth.match(reg)
+    if (!m || !m[1]) {
+      return pth
+    }
+    const envName = m[1]
+    const envPath = window.pre.env[envName]
+    if (envPath) {
+      return pth.replace(reg, envPath)
+    }
+  }
+
   onGoto = (type, e) => {
     e && e.preventDefault()
     if (type === typeMap.remote && !this.sftp) {
@@ -734,14 +806,14 @@ export default class Sftp extends Component {
     const n = `${type}Path`
     const nt = n + 'Temp'
     const oldPath = this.state[type + 'Path']
-    const np = this.state[nt]
+    const np = this.parsePath(type, this.state[nt])
     if (!isValidPath(np)) {
-      return notification.warn({
+      return notification.warning({
         message: 'path not valid'
       })
     }
     this.setState({
-      [n]: this.state[nt]
+      [n]: np
     }, () => this[`${type}List`](undefined, undefined, oldPath))
   }
 
@@ -767,9 +839,8 @@ export default class Sftp extends Component {
       ...this.props,
       file,
       type,
-      ..._.pick(this, [
+      ...pick(this, [
         'sftp',
-        'onSort',
         'modifier',
         'localList',
         'remoteList',
@@ -783,7 +854,7 @@ export default class Sftp extends Component {
         'addTransferList',
         'renderDelConfirmTitle'
       ]),
-      ..._.pick(this.state, [
+      ...pick(this.state, [
         'id',
         'localPath',
         'remotePath',
@@ -796,12 +867,8 @@ export default class Sftp extends Component {
         typeMap.remote,
         'lastClickedFile',
         'lastMataKey',
-        'transferToConfirm',
-        'transferList',
         'targetTransferType',
-        'fileOperation',
         'selectedFiles',
-        'pauseAll',
         'localGidTree',
         'remoteUidTree',
         'localUidTree',
@@ -833,32 +900,30 @@ export default class Sftp extends Component {
     )
   }
 
-  renderAddonBefore = (type) => {
-    const isShow = this.state[`${type}ShowHiddenFile`]
-    const title = `${isShow ? e('hide') : e('show')} ${e('hfd')}`
-    const Icon = isShow ? EyeFilled : EyeInvisibleFilled
-    return (
-      <div>
-        <Tooltip
-          title={title}
-          placement='topLeft'
-          arrowPointAtCenter
-        >
-          <Icon
-            type='eye'
-            className='mg1r'
-            onClick={() => this.toggleShowHiddenFile(type)}
-          />
-        </Tooltip>
-        <Tooltip
-          title={e('goParent')}
-          arrowPointAtCenter
-          placement='topLeft'
-        >
-          <ArrowUpOutlined onClick={() => this.goParent(type)} />
-        </Tooltip>
-      </div>
-    )
+  renderParentItem = (type) => {
+    const currentPath = this.state[`${type}Path`]
+    const parentPath = resolve(currentPath, '..')
+    // Don't render parent item if we're at the root
+    if (parentPath === currentPath) {
+      return null
+    }
+
+    const { id } = this.props.tab
+    const uniqueId = `parent-${parentPath}-${id}-${type}`
+
+    return {
+      type,
+      isDirectory: true,
+      ...getFolderFromFilePath(parentPath, type === typeMap.remote),
+      id: uniqueId,
+      size: 0,
+      modifyTime: 0,
+      accessTime: 0,
+      mode: 0,
+      owner: '',
+      group: '',
+      isParent: true
+    }
   }
 
   renderHistory = (type) => {
@@ -896,35 +961,6 @@ export default class Sftp extends Component {
     )
   }
 
-  renderInput (type) {
-    const {
-      loadingSftp
-    } = this.state
-    const n = `${type}PathTemp`
-    const path = this.state[n]
-    const realPath = this.state[`${type}Path`]
-    const isLoadingRemote = type === typeMap.remote && loadingSftp
-    const GoIcon = isLoadingRemote
-      ? LoadingOutlined
-      : (realPath === path ? ReloadOutlined : ArrowRightOutlined)
-    return (
-      <Input
-        value={path}
-        onChange={e => this.onChange(e, n)}
-        onPressEnter={e => this.onGoto(type, e)}
-        addonBefore={this.renderAddonBefore(type)}
-        onFocus={() => this.onInputFocus(type)}
-        onBlur={() => this.onInputBlur(type)}
-        disabled={loadingSftp}
-        addonAfter={
-          <GoIcon
-            onClick={isLoadingRemote ? () => null : () => this.onGoto(type)}
-          />
-        }
-      />
-    )
-  }
-
   renderSection (type, style, width) {
     const {
       id
@@ -933,10 +969,12 @@ export default class Sftp extends Component {
     const loading = this.state[`${type}Loading`]
     const { host, username } = this.props.tab
     const listProps = {
+      store: window.store,
       id,
       type,
+      parentItem: this.renderParentItem(type),
       ...this.props,
-      ..._.pick(
+      ...pick(
         this,
         [
           'directions',
@@ -951,6 +989,34 @@ export default class Sftp extends Component {
       sortDirection: this.state[`sortDirection.${type}`],
       width,
       fileList: arr
+    }
+    const addrProps = {
+      host,
+      type,
+      ...pick(
+        this,
+        [
+          'onChange',
+          'onGoto',
+          'onInputFocus',
+          'onInputBlur',
+          'toggleShowHiddenFile',
+          'goParent',
+          'onClickHistory'
+        ]
+      ),
+      ...pick(
+        this.state,
+        [
+          `${type}ShowHiddenFile`,
+          'onGoto',
+          `${type}PathTemp`,
+          `${type}Path`,
+          `${type}PathHistory`,
+          `${type}InputFocus`,
+          'loadingSftp'
+        ]
+      )
     }
     return (
       <div
@@ -967,19 +1033,16 @@ export default class Sftp extends Component {
                   <div className='pd1t pd1b pd1x alignright'>
                     {e('remote')}: {username}@{host}
                   </div>
-                )
+                  )
                 : (
                   <div className='pd1t pd1b pd1x'>
                     {e('local')}
                   </div>
-                )
+                  )
             }
-            <div className='pd1y sftp-title-wrap'>
-              <div className='sftp-title'>
-                {this.renderInput(type)}
-                {this.renderHistory(type)}
-              </div>
-            </div>
+            <AddressBar
+              {...addrProps}
+            />
             <div
               className={`file-list ${type} relative`}
             >
@@ -994,16 +1057,17 @@ export default class Sftp extends Component {
   }
 
   renderSections () {
+    if (!this.isActive()) {
+      return null
+    }
     const arr = [
       typeMap.local,
       typeMap.remote
     ]
     const {
-      height, tab, width
+      height, width
     } = this.props
-    const shouldRenderRemote = _.get(tab, 'host') &&
-      _.get(this.props, 'tab.type') !== terminalSshConfigType &&
-      _.get(this.props, 'tab.enableSftp') !== false
+    const shouldRenderRemote = this.shouldRenderRemote()
     if (!shouldRenderRemote) {
       return (
         this.renderSection(arr[0], {
@@ -1014,56 +1078,34 @@ export default class Sftp extends Component {
         }, width)
       )
     }
-    return (
-      <ResizeWrap
-        direction='horizontal'
-        noResizeEvent
-        onDragEnd={this.onResizeDragEnd}
-        minWidth={300}
-      >
-        {
-          arr.map((t, i) => {
-            const style = {
-              width: width / 2,
-              left: i * width / 2,
-              top: 0,
-              height
-            }
-            return this.renderSection(t, style, width / 2)
-          })
-        }
-      </ResizeWrap>
-    )
+    return arr.map((t, i) => {
+      const style = {
+        width: width / 2,
+        left: i * width / 2,
+        top: 0,
+        height
+      }
+      return this.renderSection(t, style, width / 2)
+    })
   }
 
   render () {
+    const { height } = this.props
     const {
       id
     } = this.state
-    const { height } = this.props
-    const prps = {
-      localList: this.localList,
-      remoteList: this.remoteList,
-      sftp: this.sftp,
-      sessionId: this.props.sessionId,
-      store: this.props.store,
-      host: this.props.tab.host,
-      localListDebounce: this.localListDebounce,
-      remoteListDebounce: this.remoteListDebounce,
-      config: this.props.config,
-      tab: this.props.tab,
-      pid: this.props.pid
+    const all = {
+      className: 'sftp-wrap overhide relative',
+      id: `id-${id}`,
+      style: { height }
     }
     return (
       <div
-        className='sftp-wrap overhide relative'
-        id={`id-${id}`}
-        style={{ height }}
+        {...all}
       >
         {
           this.renderSections()
         }
-        <TransportEntry {...prps} />
       </div>
     )
   }

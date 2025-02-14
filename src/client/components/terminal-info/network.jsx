@@ -3,13 +3,15 @@
  */
 
 import { Table } from 'antd'
-import _ from 'lodash'
+import { isEmpty } from 'lodash-es'
 import { useEffect, useState } from 'react'
+import { formatBytes } from '../../common/byte-format'
 import copy from 'json-deep-copy'
+import { ApiOutlined } from '@ant-design/icons'
 
 export default function TerminalInfoDisk (props) {
-  const { network } = props
-  if (_.isEmpty(network) || !props.isRemote) {
+  const { network, isRemote, terminalInfos } = props
+  if (isEmpty(network) || !isRemote || !terminalInfos.includes('network')) {
     return null
   }
   const [state, setter] = useState({
@@ -38,7 +40,7 @@ export default function TerminalInfoDisk (props) {
         pv.download &&
         p.download > pv.download
       ) {
-        p.down = Math.floor((p.download - pv.download) / diff) + 'k'
+        p.down = Math.floor((p.download - pv.download) / diff)
       }
       if (
         p &&
@@ -47,7 +49,7 @@ export default function TerminalInfoDisk (props) {
         pv.upload &&
         p.upload > pv.upload
       ) {
-        p.up = Math.floor((p.upload - pv.upload) / diff) + 'k'
+        p.up = Math.floor((p.upload - pv.upload) / diff)
       }
     }
     setState({
@@ -58,7 +60,7 @@ export default function TerminalInfoDisk (props) {
   useEffect(() => {
     updateTraffic()
   }, [props.network])
-  if (_.isEmpty(state)) {
+  if (isEmpty(state)) {
     return null
   }
   const arr = Object.keys(state.network).map(k => {
@@ -77,15 +79,22 @@ export default function TerminalInfoDisk (props) {
   const map = {
     up: '↑',
     down: '↓',
-    name: 'name'
+    name: 'name',
+    ip: 'ipv4'
   }
-  const col = ['name', 'up', 'down'].map((k, i) => {
+  const col = ['name', 'ip', 'up', 'down'].map((k, i) => {
     return {
       title: map[k],
       dataIndex: k,
       key: k,
       sorter: (a, b) => {
         return a[k] > b[k] ? 1 : -1
+      },
+      render: (v) => {
+        if (k === 'up' || k === 'down') {
+          return formatBytes(v)
+        }
+        return v
       }
     }
   })
@@ -95,13 +104,11 @@ export default function TerminalInfoDisk (props) {
     bordered: true,
     size: 'small',
     columns: col,
-    pagination: {
-      pageSize: 10000
-    }
+    pagination: false
   }
   return (
     <div className='terminal-info-section terminal-info-network'>
-      <div className='pd1y bold'>Network</div>
+      <div className='pd1y bold'><ApiOutlined /> Network</div>
       <Table {...ps} />
     </div>
   )

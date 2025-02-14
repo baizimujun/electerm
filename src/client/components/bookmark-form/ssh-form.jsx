@@ -5,41 +5,36 @@ import { PureComponent } from 'react'
 import {
   message
 } from 'antd'
-import _ from 'lodash'
+import { uniq, pick } from 'lodash-es'
 import copy from 'json-deep-copy'
-import { nanoid as generate } from 'nanoid/non-secure'
+import generate from '../../common/uid'
 import {
   settingMap,
-  statusMap,
   defaultBookmarkGroupId,
   newBookmarkIdPrefix
 } from '../../common/constants'
-import isIp from '../../common/is-ip'
+import { isValidIP } from '../../common/is-ip'
 import runIdle from '../../common/run-idle'
 import getInitItem from '../../common/init-setting-item'
 import testCon from '../../common/test-connection'
 import FormUi from './ssh-form-ui'
 import findBookmarkGroupId from '../../common/find-bookmark-group-id'
-
-const { prefix } = window
-const e = prefix('form')
+import newTerm from '../../common/new-terminal'
+import { action } from 'manate'
 
 export default class BookmarkForm extends PureComponent {
   state = {
     testing: false,
-    dns: ''
+    ips: []
   }
 
   trim = (v) => {
     return (v || '').replace(/^\s+|\s+$/g, '')
   }
 
-  useIp = (form) => {
+  useIp = (form, ip) => {
     form.setFieldsValue({
-      host: this.state.dns
-    })
-    this.setState({
-      dns: ''
+      host: ip
     })
   }
 
@@ -70,21 +65,21 @@ export default class BookmarkForm extends PureComponent {
   }
 
   onBlur = async (e) => {
-    const { value } = e.target
+    const value = e.target.value.trim()
     const { type } = this.props
     if (
       type !== settingMap.bookmarks ||
-      !value || /\s/.test(value) ||
-      isIp(value)
+      !value ||
+      isValidIP(value)
     ) {
       return
     }
-    const ip = await window.pre.lookup(value)
+    const ips = await window.pre.runGlobalAsync('lookup', value)
       .catch(err => {
         log.debug(err)
       })
     this.setState({
-      dns: ip || ''
+      ips: ips || []
     })
   }
 
@@ -101,85 +96,47 @@ export default class BookmarkForm extends PureComponent {
       : currentBookmarkGroupId
   }
 
-  updateBookmarkGroups = (bookmarkGroups, bookmark, categoryId) => {
-    let index = _.findIndex(
-      bookmarkGroups,
+  updateBookmarkGroups = action((bookmark, categoryId) => {
+    const {
+      bookmarkGroups
+    } = window.store
+    let index = bookmarkGroups.findIndex(
       bg => bg.id === categoryId
     )
     if (index < 0) {
-      index = _.findIndex(
-        bookmarkGroups,
+      index = bookmarkGroups.findIndex(
         bg => bg.id === defaultBookmarkGroupId
       )
     }
     const bid = bookmark.id
     const bg = bookmarkGroups[index]
-    const updates = []
-    const old = copy(bg.bookmarkIds)
     if (!bg.bookmarkIds.includes(bid)) {
       bg.bookmarkIds.unshift(bid)
     }
-    bg.bookmarkIds = _.uniq(bg.bookmarkIds)
-    if (!_.isEqual(bg.bookmarkIds, old)) {
-      updates.push({
-        id: bg.id,
-        db: 'bookmarkGroups',
-        update: {
-          bookmarkIds: bg.bookmarkIds
-        }
-      })
-    }
-    bookmarkGroups = bookmarkGroups.map((bg, i) => {
+    bg.bookmarkIds = uniq(bg.bookmarkIds)
+    bookmarkGroups.forEach((bg, i) => {
       if (i === index) {
         return bg
       }
-      const olde = copy(bg.bookmarkIds)
       bg.bookmarkIds = bg.bookmarkIds.filter(
         g => g !== bid
       )
-      if (!_.isEqual(bg.bookmarkIds, olde)) {
-        updates.push({
-          id: bg.id,
-          db: 'bookmarkGroups',
-          update: {
-            bookmarkIds: bg.bookmarkIds
-          }
-        })
-      }
       return bg
     })
-    runIdle(() => {
-      this.props.store.storeAssign({
-        bookmarkGroups
-      })
-    })
-    runIdle(() => {
-      this.props.store.batchDbUpdate(updates)
-    })
     message.success('OK', 3)
-  }
+  })
 
   submit = (evt, item, type = this.props.type) => {
+    if (item.host) {
+      item.host = item.host.trim()
+    }
     const obj = item
+    if (obj.connectionHoppings?.length) {
+      obj.hasHopping = true
+    }
     const { addItem, editItem } = this.props.store
     const categoryId = obj.category
     delete obj.category
-    const bookmarkGroups = copy(
-      this.props.bookmarkGroups
-    )
-    if (type === settingMap.history) {
-      obj.id = generate()
-      runIdle(() => {
-        addItem(obj, settingMap.bookmarks)
-      })
-      this.updateBookmarkGroups(
-        bookmarkGroups,
-        obj,
-        categoryId
-      )
-      message.success('OK', 3)
-      return
-    }
     if (!obj.id.startsWith(newBookmarkIdPrefix)) {
       const tar = copy(obj)
       delete tar.id
@@ -187,7 +144,6 @@ export default class BookmarkForm extends PureComponent {
         editItem(obj.id, tar, settingMap.bookmarks)
       })
       this.updateBookmarkGroups(
-        bookmarkGroups,
         obj,
         categoryId
       )
@@ -196,16 +152,10 @@ export default class BookmarkForm extends PureComponent {
       }
     } else {
       obj.id = generate()
-      if (evt !== 'save' && evt !== 'saveAndCreateNew') {
-        runIdle(() => {
-          addItem(obj, settingMap.history)
-        })
-      }
       runIdle(() => {
         addItem(obj, settingMap.bookmarks)
       })
       this.updateBookmarkGroups(
-        bookmarkGroups,
         obj,
         categoryId
       )
@@ -217,17 +167,14 @@ export default class BookmarkForm extends PureComponent {
   }
 
   setNewItem = (
-    settingItem = getInitItem([],
-      settingMap.bookmarks)
+    settingItem = getInitItem([], settingMap.bookmarks)
   ) => {
-    this.props.store.storeAssign({
-      autofocustrigger: +new Date(),
-      settingItem
-    })
+    const { store } = this.props
+    store.setSettingItem(settingItem)
   }
 
   test = async (update) => {
-    const options = {
+    let options = {
       ...this.props.formData,
       ...update
     }
@@ -235,6 +182,7 @@ export default class BookmarkForm extends PureComponent {
     this.setState({
       testing: true
     })
+    options = window.store.applyProfileToTabs(options)
     const res = await testCon(options)
       .then(r => r)
       .catch((e) => {
@@ -284,17 +232,11 @@ export default class BookmarkForm extends PureComponent {
     this.handleSubmit('test', res, true)
   }
 
+  connect = (res) => {
+    this.handleSubmit('connect', res, false)
+  }
+
   handleSubmit = async (evt, res, isTest = false) => {
-    if (
-      res.proxy && (
-        (!res.proxy.proxyIp && res.proxy.proxyPort) ||
-        (!res.proxy.proxyPort && res.proxy.proxyIp)
-      )
-    ) {
-      return message.error(
-        `${e('proxyIp')} and ${e('proxyPort')} ${e('required')}`
-      )
-    }
     const obj = {
       ...this.props.formData,
       ...res
@@ -302,32 +244,26 @@ export default class BookmarkForm extends PureComponent {
     if (isTest) {
       return this.test(obj)
     }
-    evt && this.submit(evt, obj)
+    if (evt && evt !== 'connect') {
+      this.submit(evt, obj)
+    }
     if (evt !== 'save' && evt !== 'saveAndCreateNew') {
+      window.store.currentLayoutBatch = window.openTabBatch || 0
       this.props.store.addTab({
         ...copy(obj),
-        srcId: obj.id,
-        status: statusMap.processing,
-        id: generate()
+        ...newTerm(true, true),
+        batch: window.openTabBatch ?? window.store.currentLayoutBatch
       })
+      delete window.openTabBatch
       this.props.hide()
     }
   }
 
-  beforeUpload = (file, form) => {
-    const privateKey = window.pre
-      .readFileSync(file.path).toString()
-    form.setFieldsValue({
-      privateKey
-    })
-    return false
-  }
-
   getProps = () => {
-    const funcs = _.pick(this, [
-      'beforeUpload',
+    const funcs = pick(this, [
       'handleFinish',
       'testConnection',
+      'connect',
       'save',
       'saveAndCreateNew',
       'onSelectProxy',

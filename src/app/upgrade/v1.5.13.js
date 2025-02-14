@@ -1,11 +1,11 @@
 /**
- * upgrade database to v1.5.12
+ * upgrade database to v1.5.13
  */
 
 const { userConfigId } = require('../common/constants')
 const { dbAction } = require('../lib/nedb')
 const { updateDBVersion } = require('./version-upgrade')
-const log = require('../utils/log')
+const log = require('../common/log')
 const { decrypt } = require('../lib/enc')
 
 async function fixAll () {

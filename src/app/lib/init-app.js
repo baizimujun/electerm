@@ -6,39 +6,45 @@ const {
   Menu,
   Notification
 } = require('electron')
+const globalState = require('./glob-state')
 const {
-  packInfo
-} = require('../utils/constants')
+  packInfo,
+  isMac
+} = require('../common/runtime-constants')
 const buildMenu = require('./menu')
-const initTray = require('./tray')
+const { buildDocMenu } = require('./dock-menu')
 
 function capitalizeFirstLetter (string) {
   return string.charAt(0).toUpperCase() + string.slice(1)
 }
 
-function initApp (language, lang, config) {
-  global.et.lang = lang
-  global.et.language = language
-  const prefix = pre => {
-    if (global.et.language === 'en_us') {
-      return (id) => {
-        return capitalizeFirstLetter(global.et.lang[pre][id] || id)
-      }
+function initApp (langMap, config) {
+  globalState.set('langMap', langMap)
+  globalState.set('getLang', (lang = config.language || 'en_us') => {
+    return langMap[lang].lang
+  })
+  globalState.set('translate', txt => {
+    const config = globalState.get('config')
+    if (config.language === 'en_us') {
+      return capitalizeFirstLetter(
+        globalState.get('getLang')()[txt] || txt
+      )
     }
-    return (id) => {
-      return global.et.lang[pre][id] || id
-    }
+    return globalState.get('getLang')()[txt] || txt
+  })
+  if (isMac) {
+    const dockMenu = buildDocMenu()
+    globalState.get('app').dock.setMenu(dockMenu)
   }
-  const menu = buildMenu(prefix)
+  const menu = buildMenu()
   Menu.setApplicationMenu(menu)
-  initTray(menu)
-  const a = prefix('app')
+  const e = globalState.get('translate')
   // handle autohide flag
   if (process.argv.includes('--autohide')) {
-    global.et.timer1 = setTimeout(() => global.win.hide(), 500)
+    globalState.set('timer', setTimeout(() => globalState.get('win').minimize(), 500))
     if (Notification.isSupported()) {
       const notice = new Notification({
-        title: `${packInfo.name} ${a('isRunning')}, ${a('press')} ${config.hotkey} ${a('toShow')}`
+        title: `${packInfo.name} ${e('isRunning')}, ${e('press')} ${config.hotkey} ${e('toShow')}`
       })
       notice.show()
     }

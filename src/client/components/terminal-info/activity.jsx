@@ -2,39 +2,38 @@
  * process cpu/mem activities
  */
 
-import { Table } from 'antd'
-import _ from 'lodash'
-import { copy } from '../../common/clipboard'
+import { Table, Tooltip, Popconfirm } from 'antd'
+import { isEmpty } from 'lodash-es'
+import { CloseCircleOutlined, BarsOutlined } from '@ant-design/icons'
+import colsParser from './data-cols-parser'
 
-const { prefix } = window
-const m = prefix('menu')
+const e = window.translate
 
 export default function TerminalInfoActivities (props) {
-  const { activities } = props
-  if (_.isEmpty(activities) || !props.isRemote) {
+  const { activities, isRemote, terminalInfos } = props
+  if (isEmpty(activities) || !isRemote || !terminalInfos.includes('activities')) {
     return null
   }
-  const col = Object.keys(activities[0]).map(k => {
-    return {
-      title: k,
-      dataIndex: k,
-      key: k,
-      sorter: (a, b) => {
-        return a[k] > b[k] ? 1 : -1
-      },
-      render: (txt) => {
-        return (
-          <div className='activity-item'>
-            <span>{txt}</span>
-            <span
-              className='pointer activity-item-copy mg1l bold color-blue'
-              onClick={() => copy(txt)}
-            >
-              {m('copy')}
-            </span>
-          </div>
-        )
-      }
+  const col = colsParser(activities[0])
+  col.unshift({
+    dataIndex: 'kill',
+    key: 'kill',
+    title: e('close'),
+    render: (txt, inst) => {
+      return (
+        <Tooltip
+          title={e('close')}
+        >
+          <Popconfirm
+            title={e('close') + ' pid:' + inst.pid + ' ?'}
+            onConfirm={() => props.killProcess(inst.pid)}
+          >
+            <CloseCircleOutlined
+              className='pointer'
+            />
+          </Popconfirm>
+        </Tooltip>
+      )
     }
   })
   const ps = {
@@ -43,13 +42,11 @@ export default function TerminalInfoActivities (props) {
     bordered: true,
     columns: col,
     size: 'small',
-    pagination: {
-      pageSize: 10000
-    }
+    pagination: false
   }
   return (
     <div className='terminal-info-section terminal-info-act'>
-      <div className='pd1y bold'>Activities</div>
+      <div className='pd1y bold'><BarsOutlined /> Activities</div>
       <Table {...ps} />
     </div>
   )

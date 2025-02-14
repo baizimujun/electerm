@@ -2,19 +2,18 @@
  * sync data to github gist related
  */
 
-/**
- * central state store powered by subx - https://github.com/tylerlong/subx
- */
-
-import _ from 'lodash'
+import { get, pick, debounce } from 'lodash-es'
 import copy from 'json-deep-copy'
 import {
-  settingMap, packInfo
+  settingMap, packInfo, syncTypes, syncDataMaps
 } from '../common/constants'
-import { remove, dbNames, insert, update } from '../common/db'
+import { dbNames, update, getData } from '../common/db'
 import fetch from '../common/fetch-from-server'
+import download from '../common/download'
+import { fixBookmarks } from '../common/db-fix'
+import dayjs from 'dayjs'
+import parseJsonSafe from '../common/parse-json-safe'
 
-const names = _.without(dbNames, settingMap.history)
 const {
   version: packVer
 } = packInfo
@@ -35,39 +34,53 @@ async function fetchData (type, func, args, token, proxy) {
   return fetch(data)
 }
 
-export default (store) => {
-  store.openSettingSync = () => {
-    store.storeAssign({
-      tab: settingMap.setting,
-      settingItem: store.setting[0]
+function updateSyncServerStatusFromGist (store, gist, type) {
+  const status = parseJsonSafe(
+    get(gist, 'files["electerm-status.json"].content')
+  )
+  store.syncServerStatus[type] = status
+}
+
+export default (Store) => {
+  Store.prototype.updateSyncSetting = function (data) {
+    const { store } = window
+    const nd = Object.assign({}, copy(store.config.syncSetting), data)
+    if (data.giteeGistId && !data.giteeSyncPassword) {
+      delete nd.giteeSyncPassword
+    }
+    if (data.githubGistId && !data.githubSyncPassword) {
+      delete nd.githubSyncPassword
+    }
+    store.setConfig({
+      syncSetting: nd
     })
-    store.openModal()
   }
 
-  store.updateSyncSetting = (_data) => {
-    const data = copy(_data)
-    const keys = Object.keys(data)
-    if (_.isEqual(
-      _.pick(store.config.syncSetting, keys),
-      data
-    )) {
-      return
+  Store.prototype.getSyncToken = function (type) {
+    if (type === syncTypes.custom || type === syncTypes.cloud) {
+      const arr = ['AccessToken', 'ApiUrl']
+      if (type === syncTypes.custom) {
+        arr.push('GistId')
+      }
+      return arr.map(
+        p => {
+          return get(window.store.config, 'syncSetting.' + type + p)
+        }
+      ).join('####')
     }
-    store.config = {
-      ...copy(store.config),
-      syncSetting: Object.assign({}, copy(store.config.syncSetting), data)
-    }
+    return get(window.store.config, 'syncSetting.' + type + 'AccessToken')
   }
 
-  store.getSyncToken = (type) => {
-    return _.get(store.config, 'syncSetting.' + type + 'AccessToken')
+  Store.prototype.getSyncPassword = function (type) {
+    return get(window.store.config, 'syncSetting.' + type + 'SyncPassword')
   }
 
-  store.getSyncGistId = (type) => {
-    return _.get(store.config, 'syncSetting.' + type + 'GistId')
+  Store.prototype.getSyncGistId = function (type) {
+    return get(window.store.config, 'syncSetting.' + type + 'GistId')
   }
 
-  store.testSyncToken = async (type) => {
+  Store.prototype.testSyncToken = async function (type) {
+    const { store } = window
     store.isSyncingSetting = true
     const token = store.getSyncToken(type)
     const gist = await fetchData(
@@ -83,7 +96,8 @@ export default (store) => {
     return !!gist
   }
 
-  store.createGist = async (type) => {
+  Store.prototype.createGist = async function (type) {
+    const { store } = window
     store.isSyncingSetting = true
     const token = store.getSyncToken(type)
     const data = {
@@ -100,7 +114,7 @@ export default (store) => {
     ).catch(
       store.onError
     )
-    if (res) {
+    if (res && type !== syncTypes.custom) {
       store.updateSyncSetting({
         [type + 'GistId']: res.id,
         [type + 'Url']: res.html_url
@@ -109,71 +123,61 @@ export default (store) => {
     store.isSyncingSetting = false
   }
 
-  store.clearSyncSetting = async () => {
-    store.config = {
-      ...copy(store.config),
-      syncSetting: {}
-    }
+  Store.prototype.handleClearSyncSetting = async function () {
+    const { store } = window
+    const currentSyncType = store.syncType
+    const currentSettings = store.config.syncSetting || {}
+    // Create a new object without the current sync type's settings
+    const updatedSettings = Object.keys(currentSettings).reduce((acc, key) => {
+      if (!key.startsWith(currentSyncType)) {
+        acc[key] = currentSettings[key]
+      }
+      return acc
+    }, {})
+    store.setConfig({
+      syncSetting: updatedSettings
+    })
   }
 
-  store.uploadSetting = async (type) => {
+  Store.prototype.uploadSettingAll = async function () {
+    const { store, onSyncAll, syncCount = 0 } = window
+    const max = dbNames.length * 2
+    if (syncCount < max) {
+      window.syncCount = syncCount + 1
+      return
+    }
+    if (onSyncAll) {
+      return
+    }
+    window.onSyncAll = true
+    const types = Object.keys(syncTypes)
+    for (const type of types) {
+      const gistId = store.getSyncGistId(type)
+      if (gistId) {
+        await store.uploadSetting(type)
+      }
+    }
+    window.onSyncAll = false
+  }
+
+  Store.prototype.uploadSetting = async function (type) {
+    if (window[type + 'IsSyncing']) {
+      return false
+    }
+    window[type + 'IsSyncing'] = true
+    const { store } = window
     store.isSyncingSetting = true
     store.isSyncUpload = true
-    const token = store.getSyncToken(type)
-    let gistId = store.getSyncGistId(type)
-    if (!gistId) {
-      await store.createGist(type)
-      gistId = store.getSyncGistId(type)
-    }
-    if (!gistId) {
-      return
-    }
-    const objs = {}
-    for (const n of names) {
-      let str = JSON.stringify(copy(store[n]))
-      if (n === settingMap.bookmarks && store.config.syncSetting.syncEncrypt) {
-        str = await window.pre.runGlobalAsync('encryptAsync', str, token)
-      }
-      objs[`${n}.json`] = {
-        content: str
-      }
-    }
-    const res = await fetchData(type, 'update', [gistId, {
-      description: 'sync electerm data',
-      files: {
-        ...objs,
-        'userConfig.json': {
-          content: JSON.stringify(_.pick(store.config, ['theme']))
-        },
-        'electerm-status.json': {
-          content: JSON.stringify({
-            lastSyncTime: Date.now(),
-            electermVersion: packVer
-          })
-        }
-      }
-    }], token, store.getProxySetting()).catch(store.onError)
+    await store.uploadSettingAction(type).catch(store.onError)
     store.isSyncingSetting = false
     store.isSyncUpload = false
-    if (res) {
-      store.updateSyncSetting({
-        [type + 'LastSyncTime']: Date.now()
-      })
-    }
+    window[type + 'IsSyncing'] = false
   }
 
-  store.downloadSetting = async (type) => {
-    store.isSyncingSetting = true
-    store.isSyncDownload = true
+  Store.prototype.previewServerData = async function (type) {
+    const { store } = window
     const token = store.getSyncToken(type)
-    let gistId = store.getSyncGistId(type)
-    if (!gistId) {
-      await store.createGist(type)
-      gistId = store.getSyncGistId(type)
-    }
-    if (!gistId) {
-      return
-    }
+    const gistId = store.getSyncGistId(type)
     const gist = await fetchData(
       type,
       'getOne',
@@ -181,44 +185,172 @@ export default (store) => {
       token,
       store.getProxySetting()
     )
-    const toInsert = []
-    const ext = {}
+    updateSyncServerStatusFromGist(store, gist, type)
+  }
+
+  Store.prototype.uploadSettingAction = async function (type) {
+    const { store } = window
+    const token = store.getSyncToken(type)
+    let gistId = store.getSyncGistId(type)
+    if (!gistId && type !== syncTypes.cloud && type !== syncTypes.custom) {
+      await store.createGist(type)
+      gistId = store.getSyncGistId(type)
+    }
+    if (!gistId && type !== syncTypes.custom && type !== syncTypes.cloud) {
+      return
+    }
+    const pass = store.getSyncPassword(type)
+    const objs = {}
+    const { names, syncConfig } = store.getDataSyncNames()
     for (const n of names) {
-      let str = _.get(gist, `files["${n}.json"].content`)
+      let str = store.getItems(n)
+      const order = await getData(`${n}:order`)
+      if (order && order.length) {
+        str.sort((a, b) => {
+          const ai = order.findIndex(r => r === a.id)
+          const bi = order.findIndex(r => r === b.id)
+          return ai - bi
+        })
+      }
+      str = JSON.stringify(str)
+      if (
+        (n === settingMap.bookmarks || n === settingMap.profiles) &&
+        pass
+      ) {
+        str = await window.pre.runGlobalAsync('encryptAsync', str, pass)
+      }
+      objs[`${n}.json`] = {
+        content: str
+      }
+      objs[`${n}.order.json`] = {
+        content: 'empty'
+      }
+      if (syncConfig) {
+        objs['userConfig.json'] = {
+          content: JSON.stringify(
+            store.getSyncConfig()
+          )
+        }
+      }
+    }
+    const now = Date.now()
+    const status = {
+      lastSyncTime: now,
+      electermVersion: packVer,
+      deviceName: window.pre.osInfo().find(r => r.k === 'hostname')?.v || 'unknown'
+    }
+    const gistData = {
+      description: 'sync electerm data',
+      files: {
+        ...objs,
+        'electerm-status.json': {
+          content: JSON.stringify(status)
+        }
+      }
+    }
+    const res = await fetchData(
+      type,
+      'update',
+      [gistId, gistData],
+      token,
+      store.getProxySetting()
+    )
+    if (res) {
+      store.updateSyncSetting({
+        [type + 'LastSyncTime']: now
+      })
+      updateSyncServerStatusFromGist(store, gistData, type)
+    }
+  }
+
+  Store.prototype.downloadSetting = async function (type) {
+    const { store } = window
+    store.isSyncingSetting = true
+    store.isSyncDownload = true
+    await store.downloadSettingAction(type).catch(store.onError)
+    store.isSyncingSetting = false
+    store.isSyncDownload = false
+  }
+
+  Store.prototype.downloadSettingAction = async function (type) {
+    const { store } = window
+    const token = store.getSyncToken(type)
+    let gistId = store.getSyncGistId(type)
+    if (!gistId && type !== syncTypes.cloud && type !== syncTypes.custom) {
+      await store.createGist(type)
+      gistId = store.getSyncGistId(type)
+    }
+    if (!gistId && type !== syncTypes.custom && type !== syncTypes.cloud) {
+      return
+    }
+    const pass = store.getSyncPassword(type)
+    const gist = await fetchData(
+      type,
+      'getOne',
+      [gistId],
+      token,
+      store.getProxySetting()
+    )
+    if (gist) {
+      updateSyncServerStatusFromGist(store, gist, type)
+    }
+    const { names, syncConfig } = store.getDataSyncNames()
+    for (const n of names) {
+      let str = get(gist, `files["${n}.json"].content`)
       if (!str) {
-        store.isSyncingSetting = false
-        store.isSyncDownload = false
-        throw new Error(('Seems you have a empty gist, you can try use existing gist ID or upload first'))
+        if (n === settingMap.bookmarks) {
+          throw new Error(('Seems you have a empty gist, you can try use existing gist ID or upload first'))
+        } else {
+          continue
+        }
       }
       if (!isJSON(str)) {
-        str = await window.pre.runGlobalAsync('decryptAsync', str, token)
+        str = await window.pre.runGlobalAsync('decryptAsync', str, pass)
       }
       let arr = JSON.parse(
         str
       )
       if (n === settingMap.terminalThemes) {
         arr = store.fixThemes(arr)
+      } else if (n === settingMap.bookmarks) {
+        arr = fixBookmarks(arr)
       }
-      toInsert.push({
-        name: n,
-        value: arr
-      })
-      ext[n] = arr
+      let strOrder = get(gist, `files["${n}.order.json"].content`)
+      if (isJSON(strOrder)) {
+        strOrder = JSON.parse(strOrder)
+        arr.sort((a, b) => {
+          const ai = strOrder.findIndex(r => r === a.id)
+          const bi = strOrder.findIndex(r => r === b.id)
+          return ai - bi
+        })
+      }
+      store.setItems(n, arr)
     }
-    const userConfig = JSON.parse(
-      _.get(gist, 'files["userConfig.json"].content')
-    )
-    Object.assign(store, ext)
-    store.setTheme(userConfig.theme)
-    store.updateSyncSetting({
-      [type + 'GistId']: gist.id,
-      [type + 'Url']: gist.html_url,
+    if (syncConfig) {
+      const userConfig = parseJsonSafe(
+        get(gist, 'files["userConfig.json"].content')
+      )
+      if (userConfig) {
+        store.setConfig(userConfig)
+      }
+      if (userConfig && userConfig.theme) {
+        store.setTheme(userConfig.theme)
+      }
+    }
+
+    const up = {
       [type + 'LastSyncTime']: Date.now()
-    })
-    for (const u of toInsert) {
-      await remove(u.name)
-      await insert(u.name, u.value)
     }
+    if (type !== syncTypes.custom) {
+      Object.assign(up, {
+        [type + 'GistId']: gist.id,
+        [type + 'Url']: gist.html_url
+      })
+    }
+    if (pass) {
+      up[type + 'SyncPassword'] = pass
+    }
+    store.updateSyncSetting(up)
     store.isSyncingSetting = false
     store.isSyncDownload = false
   }
@@ -241,18 +373,147 @@ export default (store) => {
   // }
 
   // store.checkSettingSync = () => {
-  //   if (_.get(store, 'config.syncSetting.autoSync')) {
+  //   if (get(store, 'config.syncSetting.autoSync')) {
   //     store.uploadSetting()
   //   }
   // }
-  store.onChangeEncrypt = v => {
-    store.updateSyncSetting({
+  Store.prototype.onChangeEncrypt = function (v) {
+    window.store.updateSyncSetting({
       syncEncrypt: v
     })
   }
 
-  store.updateLastDataUpdateTime = _.debounce(() => {
-    store.lastDataUpdateTime = +new Date()
+  Store.prototype.updateLastDataUpdateTime = debounce(function () {
+    const { store } = window
+    store.lastDataUpdateTime = Date.now()
     update('lastDataUpdateTime', store.lastDataUpdateTime)
   }, 1000)
+
+  Store.prototype.handleExportAllData = async function () {
+    const { store } = window
+    const objs = {}
+    const { names } = store.getDataSyncNames(true)
+    for (const n of names) {
+      objs[n] = store.getItems(n)
+      const order = await getData(`${n}:order`)
+      if (order && order.length) {
+        objs[n].sort((a, b) => {
+          const ai = order.findIndex(r => r === a.id)
+          const bi = order.findIndex(r => r === b.id)
+          return ai - bi
+        })
+      }
+    }
+    objs.config = store.config
+    const text = JSON.stringify(objs)
+    const name = dayjs().format('YYYY-MM-DD-HH-mm-ss') + '-electerm-all-data.json'
+    download(name, text)
+  }
+
+  Store.prototype.importAll = async function (file) {
+    const txt = await window.fs
+      .readFile(file.path)
+    const { store } = window
+    const objs = JSON.parse(txt)
+    const { names } = store.getDataSyncNames(true)
+    for (const n of names) {
+      let arr = objs[n]
+      if (n === settingMap.terminalThemes) {
+        arr = store.fixThemes(arr)
+      } else if (n === settingMap.bookmarks) {
+        arr = fixBookmarks(arr)
+      }
+      store.setItems(n, objs[n])
+    }
+    store.updateConfig(objs.config)
+    store.setTheme(objs.config.theme)
+  }
+
+  Store.prototype.handleAutoSync = function (v) {
+    const { store } = window
+    store.setConfig({
+      autoSync: v
+    })
+  }
+
+  Store.prototype.toggleDataSyncSelected = function (key) {
+    const { store } = window
+    const {
+      dataSyncSelected = 'all'
+    } = store.config
+    let arr = dataSyncSelected && dataSyncSelected !== 'all'
+      ? dataSyncSelected.split(',')
+      : Object.keys(syncDataMaps)
+    if (arr.includes(key)) {
+      arr = arr.filter(d => d !== key)
+    } else {
+      arr.push(key)
+    }
+    store.setConfig({
+      dataSyncSelected: arr.join(',')
+    })
+  }
+  Store.prototype.getDataSyncNames = function (all) {
+    const { store } = window
+    const {
+      dataSyncSelected = 'all'
+    } = store.config
+    const syncAll = all || dataSyncSelected === 'all'
+    const keys = syncAll
+      ? Object.keys(syncDataMaps)
+      : dataSyncSelected.split(',')
+    const names = keys
+      .filter(d => d !== 'settings')
+      .map(d => syncDataMaps[d]).flat()
+    const syncConfig = keys.includes('settings')
+    return {
+      names,
+      syncConfig
+    }
+  }
+  Store.prototype.getSyncConfig = function () {
+    const { store } = window
+    const configSyncKeys = [
+      'keepaliveInterval',
+      'rightClickSelectsWord',
+      'pasteWhenContextMenu',
+      'ctrlOrMetaOpenTerminalLink',
+      'hotkey',
+      'sshReadyTimeout',
+      'scrollback',
+      'fontSize',
+      'execWindows',
+      'execMac',
+      'execLinux',
+      'execWindowsArgs',
+      'execMacArgs',
+      'execLinuxArgs',
+      'disableSshHistory',
+      'disableTransferHistory',
+      'terminalType',
+      'keepaliveCountMax',
+      'saveTerminalLogToFile',
+      'checkUpdateOnStart',
+      'cursorBlink',
+      'cursorStyle',
+      'terminalWordSeparator',
+      'confirmBeforeExit',
+      'autoRefreshWhenSwitchToSftp',
+      'addTimeStampToTermLog',
+      'showHiddenFilesOnSftpStart',
+      'terminalInfos',
+      'filePropsEnabled',
+      'hideIP',
+      'terminalTimeout',
+      'theme',
+      'language',
+      'copyWhenSelect',
+      'customCss',
+      'dataSyncSelected',
+      'baseURLAI',
+      'modelAI',
+      'roleAI'
+    ]
+    return pick(store.config, configSyncKeys)
+  }
 }

@@ -5,6 +5,7 @@
     "output": "dist",
     "buildResources": "node_modules/@electerm/electerm-resource/build-res"
   },
+  "electronLanguages": ["en-US"],
   "asar": true,
   "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
   "win": {
@@ -27,7 +28,14 @@
     "category": "public.app-category.developer-tools",
     "target": "dmg",
     "icon": "node_modules/@electerm/electerm-resource/build/icons.icns",
-    "publish": ["github"]
+    "publish": ["github"],
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "./build/entitlements.plist",
+    "entitlementsInherit": "./build/entitlements.plist",
+    "notarize": {
+      "teamId": "__teamId"
+    }
   },
   "dmg": {
     "contents": [
@@ -56,6 +64,9 @@
   },
   "snap": {
     "confinement": "classic",
-    "publish": ["github", "snapStore"]
+    "publish": ["github"]
+  },
+  "deb": {
+    "afterInstall": "build/bin/linux-deb-after-build.sh"
   }
 }

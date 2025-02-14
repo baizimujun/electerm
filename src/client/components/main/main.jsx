@@ -1,37 +1,55 @@
-
-import { Component } from '../common/react-subx'
-import Session from '../session'
-import Tabs from '../tabs'
-import _ from 'lodash'
-import copy from 'json-deep-copy'
-import ContextMenu from '../common/context-menu'
-import FileInfoModal from '../sftp/file-props-modal'
-import FileModeModal from '../sftp/file-mode-modal'
+import { auto } from 'manate/react'
+import { useEffect } from 'react'
+import Layout from '../layout/layout'
+import FileInfoModal from '../sftp/file-info-modal'
 import UpdateCheck from './upgrade'
 import SettingModal from '../setting-panel/setting-modal'
-import createTitle from '../../common/create-title'
-import TextEditor from '../text-editor'
-import TextEditorSystem from '../text-editor/edit-with-system-editor'
+import TextEditor from '../text-editor/text-editor'
 import Sidebar from '../sidebar'
-import SystemMenu from './system-menu'
+import BatchOp from '../batch-op/batch-op'
 import CssOverwrite from './css-overwrite'
 import UiTheme from './ui-theme'
+import CustomCss from './custom-css.jsx'
+import Resolutions from '../rdp/resolution-edit'
 import TerminalInteractive from '../terminal/terminal-interactive'
+import ConfirmModalStore from '../sftp/confirm-modal-store.jsx'
+import TransferConflictStore from '../sftp/transfer-conflict-store.jsx'
+import TransportsActionStore from '../sftp/transports-action-store.jsx'
 import classnames from 'classnames'
+import ShortcutControl from '../shortcuts/shortcut-control.jsx'
 import { isMac, isWin } from '../../common/constants'
 import TermFullscreenControl from './term-fullscreen-control'
-import { init } from '../../common/fetch-from-server'
+import TerminalInfo from '../terminal-info/terminal-info'
+import { LoadingUI } from './loading'
+import { ConfigProvider, notification, message } from 'antd'
+import InfoModal from '../sidebar/info-modal.jsx'
+import RightSidePanel from '../side-panel-r/side-panel-r'
+import ConnectionHoppingWarning from './connection-hopping-warnning'
+import SshConfigLoadNotify from '../ssh-config/ssh-config-load-notify'
+import LoadSshConfigs from '../ssh-config/load-ssh-configs'
+import AIChat from '../ai/ai-chat'
+import { pick } from 'lodash-es'
+import deepCopy from 'json-deep-copy'
 import './wrapper.styl'
 
-export default class Index extends Component {
-  componentDidMount () {
-    const { store } = this.props
-    window.lang = copy(window.lang)
-    window._config = copy(window._config)
-    const title = createTitle(store.tabs[0])
-    window.pre.runGlobalAsync('setTitle', title)
+function setupGlobalMessageDismiss () {
+  document.addEventListener('click', (event) => {
+    const messageElement = event.target.closest('.ant-message-notice')
+    if (messageElement) {
+      message.destroy()
+    }
+  })
+}
+
+export default auto(function Index (props) {
+  useEffect(() => {
+    notification.config({
+      placement: 'bottomRight'
+    })
+    setupGlobalMessageDismiss()
+    const { store } = props
     window.addEventListener('resize', store.onResize)
-    store.onResize()
+    setTimeout(store.triggerResize, 200)
     const { ipcOnEvent } = window.pre
     ipcOnEvent('checkupdate', store.onCheckUpdate)
     ipcOnEvent('open-about', store.openAbout)
@@ -40,7 +58,11 @@ export default class Index extends Component {
     ipcOnEvent('openSettings', store.openSetting)
     ipcOnEvent('selectall', store.selectall)
     ipcOnEvent('focused', store.focus)
-    ipcOnEvent('window-move', store.onResize)
+    ipcOnEvent('blur', store.onBlur)
+    ipcOnEvent('zoom-reset', store.onZoomReset)
+    ipcOnEvent('zoomin', store.onZoomIn)
+    ipcOnEvent('zoomout', store.onZoomout)
+    ipcOnEvent('confirm-exit', store.beforeExitApp)
 
     document.addEventListener('drop', function (e) {
       e.preventDefault()
@@ -51,153 +73,219 @@ export default class Index extends Component {
       e.stopPropagation()
     })
     window.addEventListener('offline', store.setOffline)
-    store.zoom(store.config.zoom, false, true)
+    if (window.et.isWebApp) {
+      window.onbeforeunload = store.beforeExit
+    }
+    store.isSecondInstance = window.pre.runSync('isSecondInstance')
     store.initData()
-    init()
+    store.checkForDbUpgrade()
+    // window.pre.runGlobalAsync('registerDeepLink')
+  }, [])
+
+  const { store } = props
+  const {
+    configLoaded,
+    config,
+    terminalFullScreen,
+    pinned,
+    isSecondInstance,
+    pinnedQuickCommandBar,
+    wsInited,
+    installSrc,
+    fileTransfers,
+    uiThemeConfig,
+    transferHistory,
+    transferToConfirm,
+    openResolutionEdit,
+    rightPanelTitle,
+    rightPanelTab
+  } = store
+  const upgradeInfo = deepCopy(store.upgradeInfo)
+  const cls = classnames({
+    loaded: configLoaded,
+    'not-webapp': !window.et.isWebApp,
+    'system-ui': store.config.useSystemTitleBar,
+    'not-system-ui': !store.config.useSystemTitleBar,
+    'is-mac': isMac,
+    'not-mac': !isMac,
+    'is-win': isWin,
+    pinned,
+    'qm-pinned': pinnedQuickCommandBar,
+    'term-fullscreen': terminalFullScreen,
+    'is-main': !isSecondInstance
+  })
+  const ext1 = {
+    className: cls
+  }
+  const cpConf = config
+  const confsCss = Object
+    .keys((cpConf))
+    .filter(d => d.startsWith('terminalBackground'))
+    .reduce((p, k) => {
+      return {
+        ...p,
+        [k]: cpConf[k]
+      }
+    }, {})
+  const themeProps = {
+    themeConfig: store.getUiThemeConfig()
+  }
+  const outerProps = {
+    style: {
+      opacity: config.opacity
+    }
+  }
+  const copiedTransfer = deepCopy(fileTransfers)
+  const copiedHistory = deepCopy(transferHistory)
+  const sidebarProps = {
+    ...pick(store, [
+      'activeItemId',
+      'history',
+      'showModal',
+      'showInfoModal',
+      'openedSideBar',
+      'height',
+      'settingTab',
+      'settingItem',
+      'isSyncingSetting',
+      'leftSidebarWidth',
+      'transferTab',
+      'sidebarPanelTab'
+    ]),
+    fileTransfers: copiedTransfer,
+    transferHistory: copiedHistory,
+    upgradeInfo,
+    pinned
   }
 
-  render () {
-    const { store } = this.props
-    const {
-      tabs,
-      currentTabId,
-      contextMenuProps,
-      contextMenuVisible,
-      fileInfoModalProps,
-      fileModeModalProps,
-      textEditorProps,
-      textEditorSystemProps,
-      storeAssign,
-      updateConfig,
+  const infoModalProps = {
+    ...pick(store, [
+      'infoModalTab',
+      'showInfoModal',
+      'commandLineHelp'
+    ]),
+    installSrc,
+    upgradeInfo: store.upgradeInfo
+  }
+  const conflictStoreProps = {
+    fileTransferChanged: JSON.stringify(copiedTransfer),
+    fileTransfers: copiedTransfer
+  }
+  const batchOpProps = {
+    transferHistory,
+    showModal: store.showModal,
+    innerWidth: store.innerWidth
+  }
+  const resProps = {
+    resolutions: deepCopy(store.resolutions),
+    openResolutionEdit
+  }
+
+  const rightPanelProps = {
+    rightPanelVisible: store.rightPanelVisible,
+    rightPanelPinned: store.rightPanelPinned,
+    rightPanelWidth: store.rightPanelWidth,
+    title: rightPanelTitle,
+    rightPanelTab
+  }
+  const terminalInfoProps = {
+    rightPanelTab,
+    ...deepCopy(store.terminalInfoProps),
+    ...pick(
       config,
-      terminalFullScreen,
-      pinned
-    } = store
-    const cls = classnames({
-      'system-ui': window._config.useSystemTitleBar,
-      'is-mac': isMac,
-      'is-win': isWin,
-      pinned,
-      'term-fullscreen': terminalFullScreen
-    })
-    const ext1 = {
-      className: cls
-    }
-    const cpConf = copy(config)
-    const confsCss = Object
-      .keys((cpConf))
-      .filter(d => d.startsWith('terminalBackground'))
-      .reduce((p, k) => {
-        return {
-          ...p,
-          [k]: cpConf[k]
-        }
-      }, {})
-    const confsProxy = store.getProxySetting()
-    const themeProps = {
-      themeConfig: store.getUiThemeConfig()
-    }
-    const updateProps = {
-      proxy: confsProxy,
-      upgradeInfo: copy(store.upgradeInfo)
-    }
-    const outerProps = {
-      style: {
-        opacity: config.opacity
-      }
-    }
-    const tabsProps = {
-      ..._.pick(store, [
-        'currentTabId',
-        'height',
-        'width',
-        'config',
-        'activeTerminalId',
-        'isMaximized'
-      ]),
-      tabs: copy(store.tabs)
-    }
-    return (
+      [
+        'host',
+        'port',
+        'saveTerminalLogToFile',
+        'terminalInfos',
+        'sessionLogPath'
+      ]
+    )
+  }
+  const sshConfigProps = {
+    ...pick(store, [
+      'settingTab',
+      'showModal',
+      'sshConfigs'
+    ])
+  }
+  const warningProps = {
+    hasOldConnectionHoppingBookmark: store.hasOldConnectionHoppingBookmark,
+    configLoaded
+  }
+  const aiChatProps = {
+    aiChatHistory: store.aiChatHistory,
+    config,
+    selectedTabIds: store.batchInputSelectedTabIds,
+    tabs: store.getTabs(),
+    activeTabId: store.activeTabId,
+    showAIConfig: store.showAIConfig,
+    rightPanelTab
+  }
+  return (
+    <ConfigProvider
+      theme={uiThemeConfig}
+    >
       <div {...ext1}>
-        <TermFullscreenControl
-          store={store}
+        <ShortcutControl config={config} />
+        <LoadingUI
+          wsInited={wsInited}
         />
-        <CssOverwrite {...confsCss} />
+        <TermFullscreenControl
+          terminalFullScreen={terminalFullScreen}
+        />
+        <CssOverwrite
+          {...confsCss}
+          wsInited={wsInited}
+        />
         <TerminalInteractive />
         <UiTheme
           {...themeProps}
           buildTheme={store.buildTheme}
         />
-        <TextEditor
-          key={textEditorProps.id}
-          {...textEditorProps}
-          storeAssign={storeAssign}
-        />
-        <TextEditorSystem
-          key={textEditorSystemProps.id}
-          {...copy(textEditorSystemProps)}
-          storeAssign={storeAssign}
-          updateConfig={updateConfig}
-          config={config}
-        />
+        <CustomCss customCss={config.customCss} />
+        <TextEditor />
         <UpdateCheck
-          store={store}
-          {...updateProps}
-          addTab={store.addTab}
+          skipVersion={cpConf.skipVersion}
+          upgradeInfo={upgradeInfo}
+          installSrc={installSrc}
         />
-        <ContextMenu
-          {...contextMenuProps}
-          visible={contextMenuVisible}
-          closeContextMenu={store.closeContextMenu}
-        />
-        <SystemMenu store={store} />
-        <FileInfoModal
-          {...fileInfoModalProps}
-        />
-        <FileModeModal
-          key={_.get(fileModeModalProps, 'file.id') || ''}
-          {...fileModeModalProps}
-        />
+        <FileInfoModal />
         <SettingModal store={store} />
+        <BatchOp {...batchOpProps} />
         <div
           id='outside-context'
           {...outerProps}
         >
-          <Sidebar store={store} />
-          <Tabs
+          <Sidebar {...sidebarProps} />
+          <Layout
             store={store}
-            {...tabsProps}
           />
-          <div className='ui-outer'>
-            {
-              tabs.map((tab) => {
-                const { id } = tab
-                const cls = id !== currentTabId
-                  ? 'hide'
-                  : 'ssh-wrap-show'
-                const tabProps = {
-                  tab: copy(tab),
-                  ..._.pick(store, [
-                    'currentTabId',
-                    'height',
-                    'width',
-                    'activeTerminalId'
-                  ]),
-                  config: cpConf
-                }
-                return (
-                  <div className={cls} key={id}>
-                    <Session
-                      store={store}
-                      {...tabProps}
-                    />
-                  </div>
-                )
-              })
-            }
-          </div>
         </div>
+        <ConfirmModalStore
+          transferToConfirm={transferToConfirm}
+        />
+        <TransferConflictStore
+          {...conflictStoreProps}
+          transferToConfirm={transferToConfirm}
+        />
+        <TransportsActionStore
+          {...conflictStoreProps}
+          config={config}
+        />
+        <Resolutions {...resProps} />
+        <InfoModal {...infoModalProps} />
+        <RightSidePanel {...rightPanelProps}>
+          <AIChat {...aiChatProps} />
+          <TerminalInfo {...terminalInfoProps} />
+        </RightSidePanel>
+        <SshConfigLoadNotify {...sshConfigProps} />
+        <LoadSshConfigs
+          showSshConfigModal={store.showSshConfigModal}
+          sshConfigs={store.sshConfigs}
+        />
+        <ConnectionHoppingWarning {...warningProps} />
       </div>
-    )
-  }
-}
+    </ConfigProvider>
+  )
+})

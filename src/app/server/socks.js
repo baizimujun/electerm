@@ -2,29 +2,87 @@
  * socks proxy wrapper
  */
 
-const { SocksClient } = require('socks')
 const { request } = require('http')
+
+function isValidIP (input) {
+  // Check IPv4 format
+  const ipv4Pattern = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
+  if (ipv4Pattern.test(input)) {
+    return true
+  }
+
+  // Check IPv6 format
+  const ipv6Pattern = /^([\da-f]{1,4}:){7}[\da-f]{1,4}$/i
+  if (ipv6Pattern.test(input)) {
+    return true
+  }
+
+  // If input doesn't match IPv4 or IPv6 patterns, it's not a valid IP
+  return false
+}
+
+function parseUrl (str) {
+  try {
+    return new URL(str)
+  } catch (e) {
+    console.log(`parse url error: ${e.message}, url: ${str}`)
+  }
+}
 
 module.exports = (initOptions) => {
   const {
-    proxy: {
-      proxyIp,
-      proxyPort,
-      proxyType,
-      proxyUsername,
-      proxyPassword
-    },
     readyTimeout,
     host,
-    port
+    port,
+    proxy
   } = initOptions
+  const proxyURL = parseUrl(proxy)
+  if (!proxyURL) {
+    throw new Error('proxy format not right:', proxy)
+  }
+  // use http proxy
+  const {
+    protocol,
+    hostname,
+    username,
+    password
+  } = proxyURL
+  const proxyPort = Number(proxyURL.port)
+  const proxyHost = proxyURL.host
+  if (protocol === 'http:' || protocol === 'https:') {
+    return new Promise((resolve, reject) => {
+      const opts = {
+        agent: false,
+        protocol,
+        hostname,
+        port: proxyPort,
+        host: proxyHost,
+        path: `${host}:${port}`,
+        method: 'CONNECT',
+        timeout: readyTimeout
+      }
+      if (username) {
+        opts.auth = `${username}:${password}`
+      }
+      request(opts)
+        .on('error', (e) => {
+          console.error(`fail to connect proxy: ${e.message}`)
+          reject(e)
+        })
+        .on('connect', (res, socket) => {
+          resolve({ socket })
+        })
+        .end()
+    })
+  }
+  const type = protocol.includes('5') ? 5 : 4
+  const isIp = isValidIP(hostname)
   const options = {
     proxy: {
-      ipaddress: proxyIp,
       port: proxyPort,
-      type: Number(proxyType),
-      userId: proxyUsername,
-      password: proxyPassword
+      type,
+      userId: username,
+      password
     },
 
     command: 'connect',
@@ -35,35 +93,13 @@ module.exports = (initOptions) => {
       port
     }
   }
-
-  // use http proxy
-  if (proxyType === '0' || proxyType === '1') {
-    const protocol = proxyType === '0' ? 'http:' : 'https:'
-    return new Promise((resolve, reject) => {
-      const opts = {
-        agent: false,
-        protocol,
-        hostname: proxyIp,
-        port: proxyPort,
-        path: `${host}:${port}`,
-        method: 'CONNECT',
-        timeout: readyTimeout
-      }
-      if (proxyUsername) {
-        opts.auth = `${proxyUsername}:${proxyPassword}`
-      }
-      request(opts)
-        .on('error', (e) => {
-          console.error(`fail to connect proxy: ${e.message}`)
-          reject(e)
-        })
-        .on('connect', (res, socket) => {
-          resolve({ socket: socket })
-        })
-        .end()
-    })
+  if (isIp) {
+    options.proxy.ipaddress = hostname
+  } else {
+    options.proxy.host = hostname
   }
 
   // use socks proxy
+  const { SocksClient } = require('socks')
   return SocksClient.createConnection(options)
 }
